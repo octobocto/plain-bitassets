@@ -13,6 +13,7 @@ bitcoin = { workspace = true, features = ["serde"] }
 blake3 = { workspace = true }
 borsh = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+const-hex = { workspace = true }
 dirs = { workspace = true }
 eframe = { workspace = true }
 either = { workspace = true }

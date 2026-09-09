@@ -12,9 +12,10 @@ use plain_bitassets::{
     state::{AmmPoolState, BitAssetSeqId, DutchAuctionState},
     types::{
         Address, AssetId, Authorization, BitAssetData, BitAssetDataUpdates,
-        BitAssetId, BitcoinOutputContent, Block, BlockHash, Body,
-        DutchAuctionId, DutchAuctionParams, EncryptionPubKey,
-        FilledOutputContent, Header, MerkleRoot, OutPoint, Output,
+        BitAssetId, BitcoinOutputContent, Block, BlockHash, BlockIndex,
+        BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body, DutchAuctionId,
+        DutchAuctionParams, EncryptionPubKey, FilledOutput,
+        FilledOutputContent, Header, M6id, MerkleRoot, OutPoint, Output,
         OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
         VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
         schema as bitassets_schema,
@@ -51,10 +52,11 @@ pub struct GetBlockTemplateResponse {
     bitassets_schema::BitcoinTransaction, bitassets_schema::BitcoinOutPoint,
     bitassets_schema::SocketAddr, Address, AssetId, Authorization,
     BitAssetData, BitAssetDataUpdates, BitAssetId, BitcoinOutputContent, Block,
-    BlockHash, Body, DutchAuctionId, DutchAuctionParams, EncryptionPubKey,
-    FilledOutputContent, Header, MerkleRoot, OutPoint, Output, OutputContent,
-    PeerConnectionStatus, Signature, Transaction, TxData, Txid, TxIn,
-    WithdrawalOutputContent, VerifyingKey,
+    BlockHash, BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body,
+    DutchAuctionId, DutchAuctionParams, EncryptionPubKey, FilledOutput,
+    FilledOutputContent, Header, M6id, MerkleRoot, OutPoint, Output,
+    OutputContent, PeerConnectionStatus, Signature, Transaction, TxData, Txid,
+    TxIn, WithdrawalOutputContent, VerifyingKey,
 ])]
 #[rpc(client, server)]
 pub trait Rpc {
@@ -241,6 +243,24 @@ pub trait Rpc {
     #[open_api_method(output_schema(ToSchema))]
     #[method(name = "get_block")]
     async fn get_block(&self, block_hash: BlockHash) -> RpcResult<Block>;
+
+    /// Get the block hash at the specified height in the current chain,
+    /// if it exists
+    #[open_api_method(output_schema(
+        PartialSchema = "schema::Optional<BlockHash>"
+    ))]
+    #[method(name = "get_block_hash")]
+    async fn get_block_hash(&self, height: u32)
+    -> RpcResult<Option<BlockHash>>;
+
+    /// Get the transaction ids, sizes and encodings of a block, with the
+    /// mainchain deposits and withdrawal bundle spends it applied
+    #[open_api_method(output_schema(ToSchema))]
+    #[method(name = "get_block_index")]
+    async fn get_block_index(
+        &self,
+        block_hash: BlockHash,
+    ) -> RpcResult<BlockIndex>;
 
     /// Assemble a block to blind merge mine, without requesting BMM for it.
     /// The caller requests BMM for `critical_hash` itself, then passes the

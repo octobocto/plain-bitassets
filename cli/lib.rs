@@ -147,6 +147,14 @@ pub enum Command {
     GetBlock {
         block_hash: BlockHash,
     },
+    /// Get the block hash at the specified height, if it exists
+    GetBlockHash {
+        height: u32,
+    },
+    /// Get everything about a block that its body does not carry
+    GetBlockIndex {
+        block_hash: BlockHash,
+    },
     /// Assemble a block to blind merge mine, without requesting BMM for it
     GetBlockTemplate,
     /// Get the current block count
@@ -455,6 +463,14 @@ where
         Command::GetBlock { block_hash } => {
             let block = rpc_client.get_block(block_hash).await?;
             serde_json::to_string_pretty(&block)?
+        }
+        Command::GetBlockHash { height } => {
+            let block_hash = rpc_client.get_block_hash(height).await?;
+            serde_json::to_string_pretty(&block_hash)?
+        }
+        Command::GetBlockIndex { block_hash } => {
+            let block_index = rpc_client.get_block_index(block_hash).await?;
+            serde_json::to_string_pretty(&block_index)?
         }
         Command::GetBlockTemplate => {
             let template = rpc_client.get_block_template().await?;

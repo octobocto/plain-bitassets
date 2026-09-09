@@ -713,6 +713,18 @@ impl Transaction {
         hashes::hash_with_scratch_buffer(self).into()
     }
 
+    /// Canonical size in bytes. The canonical encoding is the form that the
+    /// txid hashes over.
+    pub fn canonical_size(&self) -> u64 {
+        borsh::object_length(self).expect("a transaction cannot fail to size")
+            as u64
+    }
+
+    /// Canonical encoding. This is the form the txid hashes over.
+    pub fn canonical_encoding(&self) -> Vec<u8> {
+        borsh::to_vec(self).expect("serializing a transaction cannot fail")
+    }
+
     /// If the tx is a bitasset reservation, returns the reservation commitment
     pub fn reservation_commitment(&self) -> Option<Hash> {
         match self.data {
