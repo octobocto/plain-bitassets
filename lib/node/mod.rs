@@ -9,7 +9,7 @@ use std::{
 use bitcoin::amount::CheckedSum as _;
 use fallible_iterator::FallibleIterator;
 use fraction::Fraction;
-use futures::{Stream, future::BoxFuture};
+use futures::Stream;
 use heed::EnvFlags;
 use sneed::{DbError, Env, EnvError, RoTxn, RwTxnError, env};
 use tokio::sync::Mutex;
@@ -119,7 +119,7 @@ pub type FilledTransactionWithPosition =
 #[derive(Clone)]
 pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
-    cusf_mainchain: Arc<Mutex<mainchain::ValidatorClient<MainchainTransport>>>,
+    cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
     cusf_mainchain_wallet:
         Option<Arc<Mutex<mainchain::WalletClient<MainchainTransport>>>>,
     env: sneed::Env,
@@ -222,7 +222,7 @@ where
         );
         Ok(Self {
             archive,
-            cusf_mainchain: Arc::new(Mutex::new(cusf_mainchain)),
+            cusf_mainchain,
             cusf_mainchain_wallet,
             env,
             mainchain_task,
@@ -243,19 +243,13 @@ where
         &self.archive
     }
 
-    /// Borrow the CUSF mainchain client, and execute the provided future.
-    /// The CUSF mainchain client will be locked while the future is running.
-    pub async fn with_cusf_mainchain<F, Output>(&self, f: F) -> Output
+    /// Borrow the CUSF mainchain client
+    #[inline(always)]
+    pub fn with_cusf_mainchain<F, Output>(&self, f: F) -> Output
     where
-        F: for<'cusf_mainchain> FnOnce(
-            &'cusf_mainchain mut mainchain::ValidatorClient<MainchainTransport>,
-        )
-            -> BoxFuture<'cusf_mainchain, Output>,
+        F: FnOnce(&mainchain::ValidatorClient<MainchainTransport>) -> Output,
     {
-        let mut cusf_mainchain_lock = self.cusf_mainchain.lock().await;
-        let res = f(&mut cusf_mainchain_lock).await;
-        drop(cusf_mainchain_lock);
-        res
+        f(&self.cusf_mainchain)
     }
 
     pub fn try_get_tip_height(&self) -> Result<Option<u32>, Error> {
