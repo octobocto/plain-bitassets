@@ -167,6 +167,8 @@ const fn seed_node_addrs(network: Network) -> &'static [SocketAddr] {
         Network::Signet => SIGNET_SEED_NODE_ADDRS,
         Network::Regtest => &[],
         Network::Forknet => FORKNET_SEED_NODE_ADDRS,
+        // No seed runs on alphanet yet.
+        Network::Alphanet => &[],
     }
 }
 
