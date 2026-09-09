@@ -124,12 +124,16 @@ impl App {
     ) -> Result<(), Error> {
         let mut state_changes = node.watch_state();
         while let Some(()) = state_changes.next().await {
-            let () = update(
+            let update_result = update(
                 &node,
                 &mut utxos.write(),
                 &mut unconfirmed_utxos.write(),
                 &wallet,
-            )?;
+            );
+            if let Err(err) = update_result {
+                let err = anyhow::Error::from(err);
+                tracing::warn!("Failed to update wallet: {err:#}");
+            }
         }
         Ok(())
     }
