@@ -669,8 +669,7 @@ impl RpcServer for RpcServerImpl {
     }
 
     async fn openapi_schema(&self) -> RpcResult<utoipa::openapi::OpenApi> {
-        let res =
-            <plain_bitassets_app_rpc_api::RpcDoc as utoipa::OpenApi>::openapi();
+        let res = plain_bitassets_app_rpc_api::openapi().map_err(custom_err)?;
         Ok(res)
     }
 

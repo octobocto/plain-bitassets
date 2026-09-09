@@ -553,8 +553,7 @@ where
             serde_json::to_string_pretty(&utxos)?
         }
         Command::OpenApiSchema => {
-            let openapi =
-                <plain_bitassets_app_rpc_api::RpcDoc as utoipa::OpenApi>::openapi();
+            let openapi = plain_bitassets_app_rpc_api::openapi()?;
             openapi.to_pretty_json()?
         }
         Command::PendingWithdrawalBundle => {

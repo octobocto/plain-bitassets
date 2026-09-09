@@ -29,6 +29,24 @@ mod schema;
 #[cfg(test)]
 mod test;
 
+/// Build the OpenAPI document that describes [`Rpc`].
+///
+/// # Errors
+/// Fails when the builder thread does not start, or panics.
+pub fn openapi() -> std::io::Result<utoipa::openapi::OpenApi> {
+    // The generated `RpcDoc::openapi` builds every schema in one stack frame.
+    // That frame does not fit a default 2MB thread stack.
+    const STACK_SIZE: usize = 16 * 1024 * 1024;
+    std::thread::Builder::new()
+        .name("openapi-builder".to_owned())
+        .stack_size(STACK_SIZE)
+        .spawn(|| <RpcDoc as utoipa::OpenApi>::openapi())?
+        .join()
+        .map_err(|_panic| {
+            std::io::Error::other("the OpenAPI builder thread panicked")
+        })
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct TxInfo {
     pub confirmations: Option<u32>,

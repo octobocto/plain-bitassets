@@ -279,8 +279,7 @@ impl ComponentRefs for openapi::OpenApi {
 // This is a WIP and may not cover all possible errors.
 #[test]
 fn check_schema() -> anyhow::Result<()> {
-    let schema: openapi::OpenApi =
-        <crate::RpcDoc as utoipa::OpenApi>::openapi();
+    let schema: openapi::OpenApi = crate::openapi()?;
     let component_ref_locations = BTreeSet::<&str>::from_iter(
         schema
             .component_refs()
