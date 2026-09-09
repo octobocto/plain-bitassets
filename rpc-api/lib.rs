@@ -15,8 +15,8 @@ use plain_bitassets::{
         BitAssetId, BitcoinOutputContent, Block, BlockHash, BlockIndex,
         BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body, DutchAuctionId,
         DutchAuctionParams, EncryptionPubKey, FilledOutput,
-        FilledOutputContent, Header, M6id, MerkleRoot, OutPoint, Output,
-        OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
+        FilledOutputContent, Header, M6id, MempoolTx, MerkleRoot, OutPoint,
+        Output, OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
         VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
         schema as bitassets_schema,
     },
@@ -342,6 +342,10 @@ pub trait Rpc {
     async fn latest_failed_withdrawal_bundle_height(
         &self,
     ) -> RpcResult<Option<u32>>;
+
+    /// List the transactions the mempool holds, in no particular order.
+    #[method(name = "list_mempool")]
+    async fn list_mempool(&self) -> RpcResult<Vec<MempoolTx>>;
 
     /// List peers
     #[method(name = "list_peers")]

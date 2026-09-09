@@ -253,6 +253,18 @@ pub struct BlockIndex {
     pub bundle_spends: Vec<BlockIndexSpend>,
 }
 
+/// One transaction the mempool holds
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct MempoolTx {
+    /// Blake3 over the canonical encoding
+    pub txid: Txid,
+    /// Canonical size in bytes
+    pub size: u64,
+    /// Borsh encoding, as hex
+    pub raw: String,
+    pub tx: transaction::Transaction,
+}
+
 pub static OP_DRIVECHAIN_SCRIPT: LazyLock<bitcoin::ScriptBuf> =
     LazyLock::new(|| {
         let mut script = bitcoin::ScriptBuf::new();
