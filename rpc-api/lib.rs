@@ -40,7 +40,7 @@ pub fn openapi() -> std::io::Result<utoipa::openapi::OpenApi> {
     std::thread::Builder::new()
         .name("openapi-builder".to_owned())
         .stack_size(STACK_SIZE)
-        .spawn(|| <RpcDoc as utoipa::OpenApi>::openapi())?
+        .spawn(<RpcDoc as utoipa::OpenApi>::openapi)?
         .join()
         .map_err(|_panic| {
             std::io::Error::other("the OpenAPI builder thread panicked")
