@@ -5542,6 +5542,7 @@ dependencies = [
  "plain_bitassets_app_cli",
  "plain_bitassets_app_rpc_api",
  "poll-promise",
+ "reserve-port",
  "serde",
  "shlex",
  "strum 0.27.2",

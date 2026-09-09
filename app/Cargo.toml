@@ -49,6 +49,9 @@ url = { workspace = true }
 utoipa = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
+[dev-dependencies]
+reserve-port = { workspace = true }
+
 [dependencies.libes]
 workspace = true
 features = ["AES256-GCM", "ECIES-MAC", "HMAC-SHA256", "x25519"]
