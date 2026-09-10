@@ -93,12 +93,12 @@ zeromq = "0.6.0"
 [workspace.dependencies.bip300301_enforcer_lib]
 default-features = false
 git = "https://github.com/LayerTwo-Labs/bip300301_enforcer"
-rev = "9cb14bcdf97237944f69951ed6c93e7d3a9a2436"
+rev = "7958ceffa997ffa905f046de71c8e3cf33437c2d"
 
 [workspace.dependencies.bip300301_enforcer_integration_tests]
 default-features = false
 git = "https://github.com/LayerTwo-Labs/bip300301_enforcer"
-rev = "9cb14bcdf97237944f69951ed6c93e7d3a9a2436"
+rev = "7958ceffa997ffa905f046de71c8e3cf33437c2d"
 
 [workspace.dependencies.l2l-openapi]
 git = "https://github.com/Ash-L2L/l2l-openapi"
