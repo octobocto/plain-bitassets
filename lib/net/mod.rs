@@ -292,7 +292,7 @@ impl Net {
     #[instrument(skip_all, fields(addr), err(Debug))]
     pub fn connect_peer(
         &self,
-        env: sneed::Env,
+        env: sneed::Env<heed::WithoutTls>,
         addr: SocketAddr,
     ) -> Result<(), Error> {
         if self.active_peers.read().contains_key(&addr) {
@@ -337,7 +337,7 @@ impl Net {
     }
 
     pub fn new(
-        env: &sneed::Env,
+        env: &sneed::Env<heed::WithoutTls>,
         archive: Archive,
         network: Network,
         state: State,
@@ -411,7 +411,7 @@ impl Net {
     /// and a new peer was added.
     pub async fn accept_incoming(
         &self,
-        env: sneed::Env,
+        env: sneed::Env<heed::WithoutTls>,
     ) -> Result<Option<SocketAddr>, error::AcceptConnection> {
         tracing::debug!(
             "listening for connections on `{}`",
@@ -542,7 +542,7 @@ mod test {
 
     fn temp_env(
         test_name: &str,
-    ) -> anyhow::Result<(temp_dir::TempDir, sneed::Env)> {
+    ) -> anyhow::Result<(temp_dir::TempDir, sneed::Env<heed::WithoutTls>)> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -550,7 +550,7 @@ mod test {
             "bitassets-{test_name}-{}-{nanos}",
             std::process::id()
         ))?;
-        let mut opts = heed::EnvOpenOptions::new();
+        let mut opts = heed::EnvOpenOptions::new().read_txn_without_tls();
         opts.map_size(16 * 1024 * 1024).max_dbs(2);
         let env = unsafe { sneed::Env::open(&opts, temp_dir.path()) }?;
         Ok((temp_dir, env))
@@ -597,7 +597,7 @@ mod peer_handle_test {
     async fn rejected_duplicate_has_no_peer_close_event() -> anyhow::Result<()>
     {
         let temp_dir = temp_dir::TempDir::new()?;
-        let mut opts = heed::EnvOpenOptions::new();
+        let mut opts = heed::EnvOpenOptions::new().read_txn_without_tls();
         opts.map_size(16 * 1024 * 1024)
             .max_dbs(Archive::NUM_DBS + State::NUM_DBS + Net::NUM_DBS);
         let env = unsafe { sneed::Env::open(&opts, temp_dir.path()) }?;

@@ -285,8 +285,8 @@ impl Dbs {
     pub const NUM_DBS: u32 = 4;
 
     /// Create / Open DBs. Does not commit the RwTxn.
-    pub(in crate::state) fn new(
-        env: &sneed::Env,
+    pub(in crate::state) fn new<Tls>(
+        env: &sneed::Env<Tls>,
         rwtxn: &mut RwTxn,
     ) -> Result<Self, env::error::CreateDb> {
         let bitasset_to_seq =

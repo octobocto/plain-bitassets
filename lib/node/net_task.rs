@@ -275,8 +275,8 @@ fn is_fatal_reorg_error(err: &Error) -> bool {
 /// The new tip block and all ancestor blocks must exist in the node's archive.
 /// A result of `Ok(true)` indicates a successful re-org.
 /// A result of `Ok(false)` indicates that no re-org was attempted.
-fn reorg_to_tip(
-    env: &sneed::Env,
+fn reorg_to_tip<Tls>(
+    env: &sneed::Env<Tls>,
     archive: &Archive,
     mempool: &MemPool,
     state: &State,
@@ -472,7 +472,7 @@ fn reorg_to_tip(
 
 #[derive(Clone)]
 struct NetTaskContext {
-    env: sneed::Env,
+    env: sneed::Env<heed::WithoutTls>,
     archive: Archive,
     mainchain_task: MainchainTaskHandle,
     mempool: MemPool,
@@ -1389,7 +1389,7 @@ impl NetTaskHandle {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &tokio::runtime::Runtime,
-        env: sneed::Env,
+        env: sneed::Env<heed::WithoutTls>,
         archive: Archive,
         mainchain_task: MainchainTaskHandle,
         mainchain_task_event_rx: UnboundedReceiver<mainchain_task::Event>,

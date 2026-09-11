@@ -185,7 +185,7 @@ impl SyncProgress {
 }
 
 struct ContextMut<'a, Transport> {
-    env: &'a sneed::Env,
+    env: &'a sneed::Env<heed::WithoutTls>,
     archive: &'a Archive,
     mainchain: &'a mut ValidatorClient<Transport>,
     sync_progress: &'a SyncProgress,
@@ -193,7 +193,7 @@ struct ContextMut<'a, Transport> {
 }
 
 struct MainchainTask<Transport = tonic::transport::Channel> {
-    env: sneed::Env,
+    env: sneed::Env<heed::WithoutTls>,
     archive: Archive,
     mainchain: ValidatorClient<Transport>,
     sync_progress: SyncProgress,
@@ -244,7 +244,7 @@ where
     /// including the specified header.
     /// Returns `false` if the specified block was not available.
     async fn request_ancestor_infos(
-        env: &sneed::Env,
+        env: &sneed::Env<heed::WithoutTls>,
         archive: &Archive,
         cusf_mainchain: &mut ValidatorClient<Transport>,
         sync_progress: &SyncProgress,
@@ -489,7 +489,7 @@ where
     }
 
     fn handle_block_event(
-        env: &sneed::Env,
+        env: &sneed::Env<heed::WithoutTls>,
         archive: &Archive,
         event_tx: &mut UnboundedSender<Event>,
         event: proto::mainchain::Event,
@@ -750,7 +750,7 @@ pub(super) struct MainchainTaskHandle {
 
 impl MainchainTaskHandle {
     pub fn new<Transport>(
-        env: sneed::Env,
+        env: sneed::Env<heed::WithoutTls>,
         archive: Archive,
         mainchain: ValidatorClient<Transport>,
     ) -> (Self, mpsc::UnboundedReceiver<Event>)
@@ -875,7 +875,7 @@ mod test {
     /// Count the stored headers of the [`main_header_info`] chain, and fail
     /// if a stored header has a missing ancestor
     fn stored_headers(
-        env: &sneed::Env,
+        env: &sneed::Env<heed::WithoutTls>,
         archive: &Archive,
         tip_height: u32,
     ) -> anyhow::Result<u32> {

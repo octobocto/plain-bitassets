@@ -176,7 +176,7 @@ pub struct Archive {
 impl Archive {
     pub const NUM_DBS: u32 = SideTips::NUM_DBS + 14;
 
-    pub fn new(env: &sneed::Env) -> Result<Self, Error> {
+    pub fn new<Tls>(env: &sneed::Env<Tls>) -> Result<Self, Error> {
         let mut rwtxn = env.write_txn()?;
         let version =
             DatabaseUnique::create(env, &mut rwtxn, "archive_version")?;
@@ -1628,7 +1628,7 @@ pub(crate) mod test {
 
     pub(crate) fn temp_env(
         test_name: &str,
-    ) -> anyhow::Result<(temp_dir::TempDir, sneed::Env)> {
+    ) -> anyhow::Result<(temp_dir::TempDir, sneed::Env<heed::WithoutTls>)> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -1636,7 +1636,7 @@ pub(crate) mod test {
             "bitassets-{test_name}-{}-{nanos}",
             std::process::id()
         ))?;
-        let mut opts = heed::EnvOpenOptions::new();
+        let mut opts = heed::EnvOpenOptions::new().read_txn_without_tls();
         opts.map_size(256 * 1024 * 1024).max_dbs(Archive::NUM_DBS);
         let env = unsafe { sneed::Env::open(&opts, temp_dir.path()) }?;
         Ok((temp_dir, env))
