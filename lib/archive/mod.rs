@@ -1637,7 +1637,7 @@ pub(crate) mod test {
             std::process::id()
         ))?;
         let mut opts = heed::EnvOpenOptions::new();
-        opts.map_size(64 * 1024 * 1024).max_dbs(Archive::NUM_DBS);
+        opts.map_size(256 * 1024 * 1024).max_dbs(Archive::NUM_DBS);
         let env = unsafe { sneed::Env::open(&opts, temp_dir.path()) }?;
         Ok((temp_dir, env))
     }
