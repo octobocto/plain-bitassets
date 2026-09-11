@@ -283,6 +283,7 @@ impl App {
         let node = runtime.block_on(Node::new(
             config.net_addr,
             &config.datadir,
+            config.network_magic_override,
             config.network,
             cusf_mainchain,
             cusf_mainchain_wallet,
