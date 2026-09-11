@@ -70,8 +70,8 @@ impl MyBitAssets {
                         for (txid, commitment, plaintext_name) in
                             known_name_bitasset_reservations
                         {
-                            let txid = hex::encode(txid.0);
-                            let commitment = hex::encode(commitment);
+                            let txid = const_hex::encode(txid.0);
+                            let commitment = const_hex::encode(commitment);
                             ui.vertical(|ui| {
                                 ui.monospace_selectable_singleline(
                                     true,
@@ -91,8 +91,8 @@ impl MyBitAssets {
                         for (txid, commitment) in
                             unknown_name_bitasset_reservations
                         {
-                            let txid = hex::encode(txid.0);
-                            let commitment = hex::encode(commitment);
+                            let txid = const_hex::encode(txid.0);
+                            let commitment = const_hex::encode(commitment);
                             ui.vertical(|ui| {
                                 ui.monospace_selectable_singleline(
                                     false,
@@ -163,7 +163,7 @@ impl MyBitAssets {
                                     false,
                                     format!(
                                         "bitasset: {}",
-                                        hex::encode(bitasset.0)
+                                        const_hex::encode(bitasset.0)
                                     ),
                                 );
                             });
@@ -174,7 +174,7 @@ impl MyBitAssets {
                                 false,
                                 format!(
                                     "bitasset: {}",
-                                    hex::encode(bitasset.0)
+                                    const_hex::encode(bitasset.0)
                                 ),
                             );
                             ui.end_row()

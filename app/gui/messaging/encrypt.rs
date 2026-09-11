@@ -83,7 +83,7 @@ impl EncryptMessage {
                 // ephemeral public keys & shared secrets.
                 Ecies::new(receiver_pubkey)
                     .encrypt(self.plaintext.as_bytes())
-                    .map(hex::encode)
+                    .map(const_hex::encode)
                     .map_err(|err| anyhow::anyhow!("{err:?}")),
             );
         }

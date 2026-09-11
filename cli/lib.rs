@@ -453,7 +453,7 @@ where
             let msg_hex =
                 rpc_client.decrypt_msg(encryption_pubkey, msg).await?;
             if utf8 {
-                let msg_bytes: Vec<u8> = hex::decode(msg_hex)?;
+                let msg_bytes: Vec<u8> = const_hex::decode(msg_hex)?;
                 String::from_utf8(msg_bytes)?
             } else {
                 msg_hex

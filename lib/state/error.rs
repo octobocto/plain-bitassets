@@ -82,7 +82,7 @@ pub enum BitAsset {
     #[error(
         "no spent BitAsset reservation matches the commitment for the \
          registration of bitasset ({})",
-        hex::encode(bitasset.0)
+        const_hex::encode(bitasset.0)
     )]
     NoReservationForRegistration { bitasset: BitAssetId },
     #[error("Mint would cause total supply to overflow")]

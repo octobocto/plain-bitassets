@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
+use const_hex::FromHex;
 use eframe::egui;
-use hex::FromHex;
 use plain_bitassets::{
     state::BitAssetSeqId,
     types::{BitAssetData, hashes::BitAssetId},
@@ -28,7 +28,7 @@ fn show_bitasset_data(
         encryption_pubkey,
         signing_pubkey,
     } = bitasset_data;
-    let commitment = commitment.map_or("Not set".to_owned(), hex::encode);
+    let commitment = commitment.map_or("Not set".to_owned(), const_hex::encode);
     let socket_addr_v4 = socket_addr_v4
         .map_or("Not set".to_owned(), |socket_addr_v4| {
             socket_addr_v4.to_string()
@@ -86,7 +86,7 @@ fn show_bitasset_with_data(
     ui.horizontal(|ui| {
         ui.monospace_selectable_singleline(
             true,
-            format!("BitAsset ID: {}", hex::encode(bitasset_id.0)),
+            format!("BitAsset ID: {}", const_hex::encode(bitasset_id.0)),
         )
     })
     .join()

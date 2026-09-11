@@ -33,7 +33,7 @@ hashlink = { workspace = true, features = ["serde_impl"] }
 fraction = { workspace = true }
 governor = { workspace = true, features = ["quanta", "std"] }
 heed = { workspace = true }
-hex = { workspace = true, features = ["serde"] }
+const-hex = { workspace = true, features = ["serde"] }
 hex-literal = { workspace = true }
 itertools = { workspace = true }
 jsonrpsee = { workspace = true }

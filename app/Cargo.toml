@@ -20,7 +20,6 @@ either = { workspace = true }
 fallible-iterator = { workspace = true }
 fraction = { workspace = true, features = ["with-serde-support"] }
 futures = { workspace = true }
-hex = { workspace = true }
 http = { workspace = true }
 human-size = { workspace = true }
 itertools = { workspace = true }

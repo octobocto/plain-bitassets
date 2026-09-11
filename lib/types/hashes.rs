@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use bitcoin::hashes::Hash as _;
 use borsh::{BorshDeserialize, BorshSerialize};
-use hex::FromHex;
+use const_hex::FromHex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -60,13 +60,13 @@ impl FromHex for BlockHash {
 
 impl std::fmt::Display for BlockHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
 impl std::fmt::Debug for BlockHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
@@ -123,13 +123,13 @@ impl From<MerkleRoot> for Hash {
 
 impl std::fmt::Display for MerkleRoot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
 impl std::fmt::Debug for MerkleRoot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
@@ -191,13 +191,13 @@ impl<'a> From<&'a Txid> for &'a Hash {
 
 impl std::fmt::Display for Txid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
 impl std::fmt::Debug for Txid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", const_hex::encode(self.0))
     }
 }
 
@@ -282,7 +282,7 @@ pub enum ParseAssetIdError {
     #[error(transparent)]
     Borsh(#[from] borsh::io::Error),
     #[error(transparent)]
-    FromHex(#[from] hex::FromHexError),
+    FromHex(#[from] const_hex::FromHexError),
 }
 
 /// Identifier for an arbitrary asset (Bitcoin, BitAsset, or BitAsset control)
@@ -328,14 +328,14 @@ impl Serialize for AssetId {
 impl std::fmt::Display for AssetId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let bytes = borsh::to_vec(self).unwrap();
-        hex::encode(bytes).fmt(f)
+        const_hex::encode(bytes).fmt(f)
     }
 }
 
 impl FromStr for AssetId {
     type Err = ParseAssetIdError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes: Vec<u8> = hex::decode(s)?;
+        let bytes: Vec<u8> = const_hex::decode(s)?;
         borsh::from_slice(&bytes).map_err(Self::Err::from)
     }
 }

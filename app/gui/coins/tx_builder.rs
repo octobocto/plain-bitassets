@@ -78,7 +78,7 @@ impl TxBuilder {
                         true,
                         format!(
                             "BitAsset Control {}",
-                            hex::encode(bitasset_control_id.0)
+                            const_hex::encode(bitasset_control_id.0)
                         ),
                     );
                     ui.monospace_selectable_singleline(false, "1");
@@ -88,7 +88,10 @@ impl TxBuilder {
                 for (bitasset_id, value) in bitasset_values_in {
                     ui.monospace_selectable_singleline(
                         true,
-                        format!("BitAsset {}", hex::encode(bitasset_id.0)),
+                        format!(
+                            "BitAsset {}",
+                            const_hex::encode(bitasset_id.0)
+                        ),
                     );
                     ui.monospace_selectable_singleline(
                         false,

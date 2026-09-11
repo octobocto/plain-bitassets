@@ -49,7 +49,7 @@ impl Address {
         let prefix = format!("s{}_{}_", THIS_SIDECHAIN, self.as_base58());
         let prefix_digest =
             sha256::Hash::hash(prefix.as_bytes()).to_byte_array();
-        format!("{prefix}{}", hex::encode(&prefix_digest[..3]))
+        format!("{prefix}{}", const_hex::encode(&prefix_digest[..3]))
     }
 
     /// Parse the form that `format_for_deposit` writes
@@ -68,7 +68,7 @@ impl Address {
             sha256::Hash::hash(format!("{prefix}{address_str}_").as_bytes())
                 .to_byte_array();
         // A writer may use a longer checksum, so compare only what it names.
-        if !hex::encode(digest).starts_with(&checksum.to_lowercase()) {
+        if !const_hex::encode(digest).starts_with(&checksum.to_lowercase()) {
             return Err(AddressParseError::WrongDepositChecksum {
                 address: s.to_owned(),
                 checksum: checksum.to_owned(),
@@ -150,7 +150,7 @@ mod test {
         let address = Address([9u8; 20]);
         let prefix = format!("s{}_{}_", THIS_SIDECHAIN, address.as_base58());
         let digest = sha256::Hash::hash(prefix.as_bytes()).to_byte_array();
-        let formatted = format!("{prefix}{}", hex::encode(&digest[..6]));
+        let formatted = format!("{prefix}{}", const_hex::encode(&digest[..6]));
         assert_eq!(Address::from_deposit_address(&formatted).unwrap(), address);
     }
 

@@ -90,7 +90,7 @@ pub fn borsh_deserialize_hex<T>(hex: impl AsRef<[u8]>) -> anyhow::Result<T>
 where
     T: BorshDeserialize,
 {
-    match hex::decode(hex) {
+    match const_hex::decode(hex) {
         Ok(bytes) => borsh::BorshDeserialize::try_from_slice(&bytes)
             .map_err(anyhow::Error::new),
         Err(err) => Err(anyhow::Error::new(err)),

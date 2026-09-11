@@ -5,8 +5,8 @@ use std::{
     str::FromStr,
 };
 
+use const_hex::FromHex;
 use eframe::egui::{self, InnerResponse, Response, TextBuffer};
-use hex::FromHex;
 
 use plain_bitassets::{
     state::AmmPair,
@@ -539,7 +539,7 @@ impl TxCreator {
                     Default::default(),
                     &mut bitasset_data.commitment,
                     Hash::from_hex,
-                    |commitment| hex::encode(commitment),
+                    |commitment| const_hex::encode(commitment),
                 )
         });
         let ipv4_resp = ui.horizontal(|ui| {

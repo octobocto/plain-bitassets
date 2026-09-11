@@ -593,7 +593,7 @@ mod filled_content {
             serde(rename = "BitcoinSats")
         ],
         bitasset_reservation_commitment_attrs: [
-            serde(with = "hex::serde")
+            serde(with = "const_hex::serde")
         ]
     );
 

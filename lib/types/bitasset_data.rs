@@ -27,7 +27,7 @@ pub struct BitAssetData {
     /// Commitment to arbitrary data
     #[cfg_attr(feature = "clap", arg(
         long,
-        value_parser = |s: &str| <Hash as hex::FromHex>::from_hex(s)
+        value_parser = |s: &str| <Hash as const_hex::FromHex>::from_hex(s)
     ))]
     #[schema(value_type = Option<String>)]
     pub commitment: Option<Hash>,
