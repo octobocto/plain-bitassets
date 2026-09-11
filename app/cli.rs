@@ -162,6 +162,9 @@ pub(super) struct Cli {
     /// Port for the RPC server
     #[arg(default_value_t = DEFAULT_RPC_PORT, long)]
     rpc_port: u16,
+    /// Host name of the P2P server. Use this option one time for each name.
+    #[arg(long = "server-name")]
+    server_names: Vec<String>,
     /// ZMQ pub/sub address
     #[cfg(feature = "zmq")]
     #[arg(default_value_t = DEFAULT_ZMQ_ADDR, long, short)]
@@ -214,6 +217,7 @@ impl Cli {
             network_magic_override: self.network_magic,
             rpc_host: self.rpc_host,
             rpc_port: self.rpc_port,
+            server_names: HashSet::from_iter(self.server_names),
             #[cfg(feature = "zmq")]
             zmq_addr: self.zmq_addr,
         })
@@ -237,6 +241,7 @@ pub struct Config {
         Option<plain_bitassets::net::peer_message::MagicBytes>,
     pub rpc_host: Host,
     pub rpc_port: u16,
+    pub server_names: HashSet<String>,
     #[cfg(feature = "zmq")]
     pub zmq_addr: SocketAddr,
 }

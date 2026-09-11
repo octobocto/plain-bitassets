@@ -1503,6 +1503,7 @@ mod peer_retry_test {
             None,
             Network::Regtest,
             std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
             ValidatorClient::new(channel),
             None,
             runtime,
@@ -1669,7 +1670,8 @@ mod peer_retry_test {
             .await
             .context("the QUIC connection did not time out")?;
             drop(silent_peer);
-            let (remote, _) = make_server_endpoint(addr)?;
+            let (remote, _) =
+                make_server_endpoint(addr, std::collections::HashSet::new())?;
             let retry = tokio::time::timeout(Duration::from_secs(15), async {
                 remote
                     .accept()
@@ -1691,8 +1693,10 @@ mod peer_retry_test {
         let runtime = tokio::runtime::Runtime::new()?;
         runtime.block_on(async {
             let (_temp_dir, node) = temp_node(&runtime).await?;
-            let (remote, _) =
-                make_server_endpoint((Ipv4Addr::LOCALHOST, 0).into())?;
+            let (remote, _) = make_server_endpoint(
+                (Ipv4Addr::LOCALHOST, 0).into(),
+                std::collections::HashSet::new(),
+            )?;
             let addr = remote.local_addr()?;
             node.connect_peer(addr)?;
             let first =

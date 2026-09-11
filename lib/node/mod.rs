@@ -75,6 +75,7 @@ where
         magic_bytes_override: Option<crate::net::peer_message::MagicBytes>,
         network: Network,
         add_peers: HashSet<SeedAddress>,
+        server_names: HashSet<String>,
         cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
         cusf_mainchain_wallet: Option<
             mainchain::WalletClient<MainchainTransport>,
@@ -144,6 +145,7 @@ where
             state.clone(),
             bind_addr,
             add_peers,
+            server_names,
         )?;
         let cusf_mainchain_wallet =
             cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
