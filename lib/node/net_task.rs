@@ -13,24 +13,23 @@ use fallible_iterator::{FallibleIterator, IteratorExt};
 use futures::{
     StreamExt,
     channel::{
-        mpsc::{self, TrySendError, UnboundedReceiver, UnboundedSender},
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     stream,
 };
 use nonempty::NonEmpty;
-use sneed::{
-    DbError, EnvError, RwTxn, RwTxnError, db, env::error as env_error,
-    rwtxn::error as rwtxn_error,
-};
-use thiserror::Error;
+use sneed::{DbError, EnvError, RwTxn, RwTxnError};
 use tokio::task::{self, JoinHandle};
 use tokio_stream::StreamNotifyClose;
 
-use super::mainchain_task::{self, MainchainTaskHandle};
+use super::{
+    error::net_task::{self as error, Error},
+    mainchain_task::{self, MainchainTaskHandle},
+};
 use crate::{
     archive::{self, Archive},
-    mempool::{self, MemPool},
+    mempool::MemPool,
     net::{
         self, Net, PeerConnectionError, PeerConnectionInfo,
         PeerConnectionMailboxError, PeerConnectionMessage, PeerInfoRx,
@@ -39,58 +38,10 @@ use crate::{
     state::{self, State},
     types::{
         BmmResult, Body, Header, Tip,
-        proto::{
-            self,
-            mainchain::{self, Event as MainchainBlockEvent},
-        },
+        proto::mainchain::{self, Event as MainchainBlockEvent},
     },
     util::{ErrorChain, join_set},
 };
-
-#[allow(clippy::duplicated_attributes)]
-#[derive(transitive::Transitive, Debug, Error)]
-#[transitive(
-    from(db::error::IterInit, DbError),
-    from(db::error::IterItem, DbError),
-    from(env_error::WriteTxn, EnvError),
-    from(rwtxn_error::Commit, RwTxnError)
-)]
-pub enum Error {
-    #[error("archive error")]
-    Archive(#[from] archive::Error),
-    #[error("CUSF mainchain proto error")]
-    CusfMainchain(#[from] proto::Error),
-    #[error(transparent)]
-    Db(#[from] DbError),
-    #[error("Database env error")]
-    DbEnv(#[from] EnvError),
-    #[error("Database write error")]
-    DbWrite(#[from] RwTxnError),
-    #[error("Forward mainchain task request failed")]
-    ForwardMainchainTaskRequest,
-    #[error("mempool error")]
-    MemPool(#[from] mempool::Error),
-    #[error("Net error")]
-    Net(#[from] Box<net::Error>),
-    #[error("peer info stream closed")]
-    PeerInfoRxClosed,
-    #[error("Receive mainchain task response cancelled")]
-    ReceiveMainchainTaskResponse,
-    #[error("Receive reorg result cancelled (oneshot)")]
-    ReceiveReorgResultOneshot(#[source] oneshot::Canceled),
-    #[error("Send new tip ready failed")]
-    SendNewTipReady(#[source] TrySendError<NewTipReadyMessage>),
-    #[error("Send reorg result error (oneshot)")]
-    SendReorgResultOneshot,
-    #[error("state error")]
-    State(#[from] Box<state::Error>),
-}
-
-impl From<state::Error> for Error {
-    fn from(err: state::Error) -> Self {
-        Self::State(Box::new(err))
-    }
-}
 
 #[cfg(feature = "zmq")]
 #[derive(Debug)]
@@ -121,8 +72,7 @@ impl ZmqPubHandler {
                     },
                 ))
                 .unwrap_or_else(|err: zeromq::ZmqError| {
-                    let err = anyhow::Error::from(err);
-                    tracing::error!("{err:#}");
+                    tracing::error!("{:#}", ErrorChain::new(&err));
                 })
         });
         Ok(Self {
@@ -652,7 +602,9 @@ impl NetTask {
                         );
                         let () = new_tip_ready_tx
                             .unbounded_send((block_tip, Some(addr), None))
-                            .map_err(Error::SendNewTipReady)?;
+                            .map_err(|err| {
+                                Error::SendNewTipReady(err.into_send_error())
+                            })?;
                     }
                     let Some(block_descendant_tips) =
                         descendant_tips.remove(&block_hash)
@@ -737,7 +689,11 @@ impl NetTask {
                                             Some(addr),
                                             None,
                                         ))
-                                        .map_err(Error::SendNewTipReady)?;
+                                        .map_err(|err| {
+                                            Error::SendNewTipReady(
+                                                err.into_send_error(),
+                                            )
+                                        })?;
                                 }
                             }
                         }
@@ -950,14 +906,14 @@ impl NetTask {
                         ),
                         Ok(false) => {
                             PeerConnectionMessage::MainchainAncestorsError(
-                                anyhow::anyhow!(
-                                    "Requested block was not available: {block_hash}"
-                                ),
+                                error::MainchainAncestors::BlockNotAvailable {
+                                    block_hash,
+                                },
                             )
                         }
                         Err(ref err) => {
                             PeerConnectionMessage::MainchainAncestorsError(
-                                anyhow::Error::from(err.clone()),
+                                err.clone().into(),
                             )
                         }
                     };
@@ -1039,9 +995,9 @@ impl NetTask {
                 let non_fatal_err:
                     <net::error::AcceptConnection as Split>::Jfyi =
                     non_fatal_err;
-                let non_fatal_err = anyhow::Error::from(non_fatal_err);
                 tracing::error!(
-                    "Failed to accept connection: {non_fatal_err:#}"
+                    "Failed to accept connection: {:#}",
+                    ErrorChain::new(&non_fatal_err)
                 );
                 None
             }
@@ -1106,9 +1062,9 @@ impl NetTask {
                         // explicitly type error
                         let fatal_err: <net::error::AcceptConnection as Split>::Fatal =
                             fatal_err;
-                        let fatal_err = anyhow::Error::from(fatal_err);
                         tracing::error!(
-                            "failed to accept connection: {fatal_err:#}"
+                            "failed to accept connection: {:#}",
+                            ErrorChain::new(&fatal_err)
                         );
                     }
                 },
@@ -1249,8 +1205,9 @@ impl NetTask {
                             let retry_connection = err
                                 .is_duplicate_connection()
                                 || err.is_connect_timeout();
-                            let err = anyhow::anyhow!(err);
-                            tracing::error!(%addr, err = format!("{err:#}"), "Peer connection error");
+                            let err_msg =
+                                format!("{:#}", ErrorChain::new(&err));
+                            tracing::error!(%addr, err = err_msg, "Peer connection error");
                             let () = self.ctxt.net.remove_active_peer(addr);
                             if retry_connection {
                                 reconnect_peer_spawner.spawn(async move {
@@ -1302,7 +1259,11 @@ impl NetTask {
                             );
                             self.new_tip_ready_tx
                                 .unbounded_send((new_tip, Some(addr), None))
-                                .map_err(Error::SendNewTipReady)?;
+                                .map_err(|err| {
+                                    Error::SendNewTipReady(
+                                        err.into_send_error(),
+                                    )
+                                })?;
                         }
                         PeerConnectionInfo::NewTransaction(new_tx) => {
                             let mut rwtxn = self
@@ -1357,10 +1318,10 @@ impl NetTask {
                     {
                         Ok(()) => (),
                         Err(err) => {
-                            let err = anyhow::Error::from(err);
                             tracing::error!(
                                 %peer_address,
-                                "Failed to connect to peer: {err:#}"
+                                "Failed to connect to peer: {:#}",
+                                ErrorChain::new(&err)
                             )
                         }
                     }
@@ -1425,8 +1386,7 @@ impl NetTaskHandle {
         };
         let task = runtime.spawn(async {
             if let Err(err) = task.run().await {
-                let err = anyhow::Error::from(err);
-                tracing::error!("Net task error: {err:#}");
+                tracing::error!("Net task error: {:#}", ErrorChain::new(&err));
             }
         });
         NetTaskHandle {
@@ -1448,7 +1408,7 @@ impl NetTaskHandle {
         let () = self
             .new_tip_ready_tx
             .unbounded_send((new_tip, None, Some(oneshot_tx)))
-            .map_err(Error::SendNewTipReady)?;
+            .map_err(|err| Error::SendNewTipReady(err.into_send_error()))?;
         oneshot_rx.await.map_err(Error::ReceiveReorgResultOneshot)
     }
 }

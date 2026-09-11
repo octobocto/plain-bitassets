@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fmt::Debug,
     net::SocketAddr,
     path::Path,
     sync::Arc,
@@ -11,14 +10,14 @@ use fallible_iterator::FallibleIterator;
 use fraction::Fraction;
 use futures::Stream;
 use heed::EnvFlags;
-use sneed::{DbError, Env, EnvError, RoTxn, RwTxnError, env};
+use sneed::{Env, EnvError, RoTxn, RwTxnError};
 use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
 use crate::{
-    archive::{self, Archive},
+    archive::Archive,
     mempool::{self, MemPool},
-    net::{self, Net, Peer},
+    net::{Net, Peer},
     state::{
         self, AmmPair, AmmPoolState, BitAssetSeqId, DutchAuctionState, State,
     },
@@ -34,6 +33,8 @@ use crate::{
     util::Watchable,
 };
 
+pub(crate) mod error;
+pub use error::Error;
 mod mainchain_task;
 mod net_task;
 
@@ -41,77 +42,6 @@ use mainchain_task::MainchainTaskHandle;
 use net_task::NetTaskHandle;
 #[cfg(feature = "zmq")]
 use net_task::ZmqPubHandler;
-
-#[allow(clippy::duplicated_attributes)]
-#[derive(thiserror::Error, transitive::Transitive, Debug)]
-#[transitive(from(env::error::OpenEnv, EnvError))]
-#[transitive(from(env::error::ReadTxn, EnvError))]
-#[transitive(from(env::error::WriteTxn, EnvError))]
-pub enum Error {
-    #[error("address parse error")]
-    AddrParse(#[from] std::net::AddrParseError),
-    #[error(transparent)]
-    AmountOverflow(#[from] AmountOverflowError),
-    #[error(transparent)]
-    AmountUnderflow(#[from] AmountUnderflowError),
-    #[error("archive error")]
-    Archive(#[from] archive::Error),
-    #[error("CUSF mainchain proto error")]
-    CusfMainchain(#[from] proto::Error),
-    #[error(transparent)]
-    Db(#[from] DbError),
-    #[error("Database env error")]
-    DbEnv(#[from] EnvError),
-    #[error("Database write error")]
-    DbWrite(#[from] RwTxnError),
-    #[error("I/O error")]
-    Io(#[from] std::io::Error),
-    #[error("error requesting mainchain ancestors")]
-    MainchainAncestors(#[source] mainchain_task::ResponseError),
-    #[error("mempool error")]
-    MemPool(#[from] mempool::Error),
-    #[error("net error")]
-    Net(#[source] Box<net::Error>),
-    #[error("net task error")]
-    NetTask(#[source] Box<net_task::Error>),
-    #[error("No CUSF mainchain wallet client")]
-    NoCusfMainchainWalletClient,
-    #[error("block {block_hash} is not in the current chain")]
-    NotInCurrentChain { block_hash: BlockHash },
-    #[error("peer info stream closed")]
-    PeerInfoRxClosed,
-    #[error("Receive mainchain task response cancelled")]
-    ReceiveMainchainTaskResponse,
-    #[error("Send mainchain task request failed")]
-    SendMainchainTaskRequest,
-    #[error("state error")]
-    State(#[source] Box<state::Error>),
-    #[error("Utreexo error: {0}")]
-    Utreexo(String),
-    #[error("Verify BMM error")]
-    VerifyBmm(anyhow::Error),
-    #[cfg(feature = "zmq")]
-    #[error("ZMQ error")]
-    Zmq(#[from] zeromq::ZmqError),
-}
-
-impl From<net::Error> for Error {
-    fn from(err: net::Error) -> Self {
-        Self::Net(Box::new(err))
-    }
-}
-
-impl From<net_task::Error> for Error {
-    fn from(err: net_task::Error) -> Self {
-        Self::NetTask(Box::new(err))
-    }
-}
-
-impl From<state::Error> for Error {
-    fn from(err: state::Error) -> Self {
-        Self::State(Box::new(err))
-    }
-}
 
 pub type FilledTransactionWithPosition =
     (Authorized<FilledTransaction>, Option<TxIn>);

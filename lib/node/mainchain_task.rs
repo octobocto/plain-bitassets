@@ -34,73 +34,7 @@ use crate::{
     },
 };
 
-pub mod error {
-    use sneed::{EnvError, rwtxn::error as rwtxn};
-    use thiserror::Error;
-
-    use crate::{archive, types::proto};
-
-    /// Error included in a response
-    #[derive(Debug, Error)]
-    pub enum RequestAncestorInfos {
-        #[error("Archive error")]
-        Archive(#[from] archive::Error),
-        #[error("Database env error")]
-        DbEnv(#[from] EnvError),
-        #[error("Database write error")]
-        DbWrite(#[from] rwtxn::Error),
-        #[error("CUSF Mainchain proto error")]
-        Mainchain(#[from] proto::Error),
-    }
-
-    #[derive(Debug, Error)]
-    pub(in crate::node) enum SyncSideTipsToTip {
-        #[error("Archive error")]
-        Archive(#[from] archive::Error),
-        #[error("Send event error")]
-        SendEvent(#[from] futures::channel::mpsc::SendError),
-        #[error("Database write error")]
-        RwTxnCommit(#[from] rwtxn::Commit),
-    }
-
-    #[derive(Debug, Error)]
-    pub(in crate::node) enum HandleBlockEvent {
-        #[error("Archive error")]
-        Archive(#[from] archive::Error),
-        #[error("Database env error")]
-        DbEnv(#[source] EnvError),
-        #[error("Database write error")]
-        DbWrite(#[source] rwtxn::Error),
-        #[error("Send event error")]
-        SendEvent(#[from] futures::channel::mpsc::SendError),
-    }
-
-    #[derive(Debug, Error)]
-    pub(in crate::node) enum Error {
-        #[error("Ancestor info for tip ({tip}) was unavailable")]
-        AncestorInfoUnavailable { tip: bitcoin::BlockHash },
-        #[error("Database env error")]
-        DbEnv(#[source] EnvError),
-        #[error(transparent)]
-        HandleBlockEvent(#[from] HandleBlockEvent),
-        #[error("CUSF Mainchain proto error")]
-        Mainchain(#[from] proto::Error),
-        #[error("Failed to fetch ancestor info for tip ({tip})")]
-        RequestAncestorInfos {
-            tip: bitcoin::BlockHash,
-            source: Box<RequestAncestorInfos>,
-        },
-        #[error("Send event error")]
-        SendEvent(#[source] futures::channel::mpsc::SendError),
-        #[error("Send response error (oneshot)")]
-        SendResponseOneshot,
-        #[error("Failed to sync sidechain tips to mainchain tip ({tip})")]
-        SyncSideTipsToTip {
-            tip: bitcoin::BlockHash,
-            source: Box<SyncSideTipsToTip>,
-        },
-    }
-}
+use crate::{node::error::mainchain_task as error, util::ErrorChain};
 use error::Error;
 pub use error::RequestAncestorInfos as ResponseError;
 
@@ -724,10 +658,10 @@ where
                 Ok(()) => {
                     tracing::warn!("Mainchain task: the event stream closed")
                 }
-                Err(err) => {
-                    let err = anyhow::Error::from(err);
-                    tracing::error!("Mainchain task error: {err:#}");
-                }
+                Err(err) => tracing::error!(
+                    "Mainchain task error: {:#}",
+                    ErrorChain::new(&err)
+                ),
             }
             self.sync_progress.set_idle();
             tokio::time::sleep(RECONNECT_DELAY).await;

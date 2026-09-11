@@ -14,7 +14,6 @@ tonic-prost-build = { workspace = true }
 
 [dependencies]
 addr = { workspace = true }
-anyhow = { workspace = true, features = ["backtrace"] }
 async-lock = { workspace = true }
 bech32 = { workspace = true }
 bincode = { workspace = true }
@@ -71,6 +70,7 @@ workspace = true
 features = ["AES256-GCM", "ECIES-MAC", "HMAC-SHA256", "x25519"]
 
 [dev-dependencies]
+anyhow = { workspace = true }
 temp-dir = { workspace = true }
 
 [features]
