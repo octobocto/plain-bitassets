@@ -328,6 +328,35 @@ where
         )
     }
 
+    /// Invalidate a block and its descendants. If the tip descends from the
+    /// block, disconnect blocks back to the parent of the block.
+    pub fn invalidate_block(&self, block_hash: BlockHash) -> Result<(), Error> {
+        let mut rwtxn = self.env.write_txn().map_err(EnvError::from)?;
+        let Some(header) = self.archive.try_get_header(&rwtxn, block_hash)?
+        else {
+            return Ok(());
+        };
+        let tip = self.state.try_get_tip(&rwtxn)?;
+        let in_active_chain = if let Some(tip) = tip {
+            self.archive.is_descendant(&rwtxn, block_hash, tip)?
+        } else {
+            false
+        };
+        if in_active_chain {
+            while self.state.try_get_tip(&rwtxn)? != header.prev_side_hash {
+                net_task::disconnect_tip_(
+                    &mut rwtxn,
+                    &self.archive,
+                    &self.mempool,
+                    &self.state,
+                )?;
+            }
+        }
+        let () = self.archive.invalidate_block(&mut rwtxn, block_hash)?;
+        rwtxn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
     pub fn try_get_height(
         &self,
         block_hash: BlockHash,

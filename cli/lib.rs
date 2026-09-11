@@ -211,6 +211,11 @@ pub enum Command {
     GetWalletAddresses,
     /// Get wallet UTXOs
     GetWalletUtxos,
+    /// Invalidate a block and its descendants. If the tip descends from the
+    /// block, re-org to the parent of the block.
+    InvalidateBlock {
+        block_hash: BlockHash,
+    },
     /// Get the height of the latest failed withdrawal bundle
     LatestFailedWithdrawalBundleHeight,
     /// List the transactions the mempool holds
@@ -584,6 +589,10 @@ where
         Command::GetWalletUtxos => {
             let utxos = rpc_client.get_wallet_utxos().await?;
             serde_json::to_string_pretty(&utxos)?
+        }
+        Command::InvalidateBlock { block_hash } => {
+            let () = rpc_client.invalidate_block(block_hash).await?;
+            String::default()
         }
         Command::LatestFailedWithdrawalBundleHeight => {
             let height =

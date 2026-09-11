@@ -448,6 +448,11 @@ pub trait Rpc {
         bitasset_data: Option<BitAssetData>,
     ) -> RpcResult<Txid>;
 
+    /// Invalidate a block and its descendants. If the tip descends from the
+    /// block, re-org to the parent of the block.
+    #[method(name = "invalidate_block")]
+    async fn invalidate_block(&self, block_hash: BlockHash) -> RpcResult<()>;
+
     /// Remove a tx from the mempool
     #[open_api_method(output_schema(ToSchema))]
     #[method(name = "remove_from_mempool")]
