@@ -15,8 +15,9 @@ use plain_bitassets::{
         BitAssetId, BitcoinOutputContent, Block, BlockHash, BlockIndex,
         BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body, DutchAuctionId,
         DutchAuctionParams, EncryptionPubKey, FilledOutput,
-        FilledOutputContent, Header, M6id, MempoolTx, MerkleRoot, OutPoint,
-        Output, OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
+        FilledOutputContent, Header, M6id, MainchainSyncPhase,
+        MainchainSyncProgress, MempoolTx, MerkleRoot, OutPoint, Output,
+        OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
         VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
         schema as bitassets_schema,
     },
@@ -72,9 +73,9 @@ pub struct GetBlockTemplateResponse {
     BitAssetData, BitAssetDataUpdates, BitAssetId, BitcoinOutputContent, Block,
     BlockHash, BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body,
     DutchAuctionId, DutchAuctionParams, EncryptionPubKey, FilledOutput,
-    FilledOutputContent, Header, M6id, MerkleRoot, OutPoint, Output,
-    OutputContent, PeerConnectionStatus, Signature, Transaction, TxData, Txid,
-    TxIn, WithdrawalOutputContent, VerifyingKey,
+    FilledOutputContent, Header, M6id, MainchainSyncPhase, MerkleRoot,
+    OutPoint, Output, OutputContent, PeerConnectionStatus, Signature,
+    Transaction, TxData, Txid, TxIn, WithdrawalOutputContent, VerifyingKey,
 ])]
 #[rpc(client, server)]
 pub trait Rpc {
@@ -377,6 +378,12 @@ pub trait Rpc {
     async fn list_utxos(
         &self,
     ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>>;
+
+    /// Get the progress of the startup sync with the mainchain
+    #[open_api_method(output_schema(ToSchema))]
+    #[method(name = "mainchain_sync_progress")]
+    async fn mainchain_sync_progress(&self)
+    -> RpcResult<MainchainSyncProgress>;
 
     /// Attempt to mine a sidechain block
     #[open_api_method(output_schema(ToSchema))]
