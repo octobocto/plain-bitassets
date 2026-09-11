@@ -23,7 +23,6 @@ futures = { workspace = true }
 http = { workspace = true }
 human-size = { workspace = true }
 itertools = { workspace = true }
-include_path = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 mimalloc = { workspace = true, features = ["v3"] }
 parking_lot = { workspace = true }

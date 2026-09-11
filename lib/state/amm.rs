@@ -152,7 +152,7 @@ impl PoolState {
             creation_txid,
         } = self;
         if *outstanding_lp_tokens == 0 {
-            do yeet Error::InvalidBurn
+            return Err(Error::InvalidBurn);
         };
         // compute payout based on either asset
         let payout = |reserve: u64| -> Result<u64, Error> {
@@ -428,7 +428,7 @@ pub(in crate::state) fn apply_mint(
         .checked_sub(amm_pool_state.outstanding_lp_tokens)
         .ok_or(Error::InvalidMint)?;
     if lp_tokens_minted != lp_token_mint {
-        do yeet Error::InvalidMint;
+        return Err(Error::InvalidMint);
     }
     pools.put(rwtxn, &amm_pair, &new_amm_pool_state)?;
     Ok(())

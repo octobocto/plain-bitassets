@@ -67,13 +67,13 @@ impl DutchAuctionState {
             end_price_after_most_recent_bid,
         } = self;
         if height < *start_block {
-            do yeet error::Bid::AuctionNotStarted
+            return Err(error::Bid::AuctionNotStarted);
         };
         // Blocks elapsed since last bid
         let elapsed_blocks = height - most_recent_bid_block.latest().data;
         let end_block = start_block.saturating_add(*duration - 1);
         if height > end_block || base_amount_remaining.latest().data == 0 {
-            do yeet error::Bid::AuctionEnded
+            return Err(error::Bid::AuctionEnded);
         };
 
         let remaining_duration_at_most_recent_bid =
@@ -106,7 +106,7 @@ impl DutchAuctionState {
             price_after_most_recent_bid.latest().data - price_decrease
         };
         if price == 0 {
-            do yeet error::Bid::InvalidPrice
+            return Err(error::Bid::InvalidPrice);
         };
         // Calculate order quantity for this bid, in terms of the base
         let order_quantity: u128 = {
@@ -119,7 +119,7 @@ impl DutchAuctionState {
             if order_quantity <= base_amount_remaining.latest().data as u128 {
                 order_quantity as u64
             } else {
-                do yeet error::Bid::QuantityTooLarge
+                return Err(error::Bid::QuantityTooLarge);
             };
         let new_base_amount_remaining =
             base_amount_remaining.latest().data - order_quantity;
@@ -229,14 +229,14 @@ pub(in crate::state) fn apply_bid(
         .try_get(rwtxn, &auction_id)?
         .ok_or(error::Bid::MissingAuction)?;
     if asset_receive != dutch_auction_state.base_asset {
-        do yeet error::Bid::IncorrectReceiveAsset
+        return Err(error::Bid::IncorrectReceiveAsset.into());
     }
     if asset_spend != dutch_auction_state.quote_asset {
-        do yeet error::Bid::IncorrectSpendAsset
+        return Err(error::Bid::IncorrectSpendAsset.into());
     }
     if amount_receive > dutch_auction_state.base_amount_remaining.latest().data
     {
-        do yeet error::Bid::QuantityTooLarge
+        return Err(error::Bid::QuantityTooLarge.into());
     };
     let new_dutch_auction_state =
         dutch_auction_state.bid(filled_tx.txid(), amount_spend, height)?;
@@ -244,7 +244,7 @@ pub(in crate::state) fn apply_bid(
         dutch_auction_state.base_amount_remaining.latest().data
             - new_dutch_auction_state.base_amount_remaining.latest().data;
     if amount_receive != order_quantity {
-        do yeet error::Bid::InvalidPrice
+        return Err(error::Bid::InvalidPrice.into());
     };
     db.put(rwtxn, &auction_id, &new_dutch_auction_state)?;
     Ok(())
@@ -269,10 +269,10 @@ pub(in crate::state) fn revert_bid(
         .try_get(rwtxn, &auction_id)?
         .ok_or(error::Bid::MissingAuction)?;
     if asset_receive != dutch_auction_state.base_asset {
-        do yeet error::Bid::IncorrectReceiveAsset
+        return Err(error::Bid::IncorrectReceiveAsset.into());
     }
     if asset_spend != dutch_auction_state.quote_asset {
-        do yeet error::Bid::IncorrectSpendAsset
+        return Err(error::Bid::IncorrectSpendAsset.into());
     }
     let new_dutch_auction_state =
         dutch_auction_state.revert_bid(filled_tx.txid())?;
@@ -298,15 +298,15 @@ pub(in crate::state) fn apply_create(
         final_price,
     } = dutch_auction_params;
     if height >= start_block {
-        do yeet error::Create::Expired;
+        return Err(error::Create::Expired.into());
     };
     if final_price > initial_price {
-        do yeet error::Create::FinalPrice;
+        return Err(error::Create::FinalPrice.into());
     };
     match duration {
-        0 => do yeet error::Create::ZeroDuration,
+        0 => return Err(error::Create::ZeroDuration.into()),
         1 if final_price != initial_price => {
-            do yeet error::Create::PriceMismatch
+            return Err(error::Create::PriceMismatch.into());
         }
         _ => (),
     };
@@ -379,25 +379,25 @@ pub(in crate::state) fn apply_collect(
         .try_get(rwtxn, &auction_id)?
         .ok_or(error::Collect::MissingAuction)?;
     if auction_state.base_asset != asset_offered {
-        do yeet error::Collect::IncorrectOfferedAsset
+        return Err(error::Collect::IncorrectOfferedAsset.into());
     }
     if auction_state.quote_asset != asset_receive {
-        do yeet error::Collect::IncorrectReceiveAsset
+        return Err(error::Collect::IncorrectReceiveAsset.into());
     }
     if height
         < auction_state
             .start_block
             .saturating_add(auction_state.duration)
     {
-        do yeet error::Collect::AuctionNotFinished
+        return Err(error::Collect::AuctionNotFinished.into());
     }
     if amount_offered_remaining
         != auction_state.base_amount_remaining.latest().data
     {
-        do yeet error::Collect::IncorrectOfferedAssetAmount
+        return Err(error::Collect::IncorrectOfferedAssetAmount.into());
     }
     if amount_received != auction_state.quote_amount.latest().data {
-        do yeet error::Collect::IncorrectReceiveAssetAmount
+        return Err(error::Collect::IncorrectReceiveAssetAmount.into());
     }
     let txid = filled_tx.txid();
     auction_state.base_amount_remaining.push(0, txid, height);

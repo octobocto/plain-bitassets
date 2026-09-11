@@ -6,7 +6,7 @@ use std::{
 };
 
 use bitcoin::amount::CheckedSum as _;
-use fallible_iterator::FallibleIterator;
+use fallible_iterator::{FallibleIterator, IteratorExt};
 use fraction::Fraction;
 use futures::Stream;
 use heed::EnvFlags;
@@ -725,8 +725,11 @@ where
         let rotxn = self.env.read_txn()?;
         let tip = self.state.try_get_tip(&rotxn)?;
         let inclusions = self.archive.get_tx_inclusions(&rotxn, txid)?;
-        if let Some((block_hash, idx)) =
-            inclusions.into_iter().try_find(|(block_hash, _)| {
+        if let Some((block_hash, idx)) = inclusions
+            .into_iter()
+            .map(Ok)
+            .transpose_into_fallible()
+            .find(|(block_hash, _)| {
                 if let Some(tip) = tip {
                     self.archive.is_descendant(&rotxn, *block_hash, tip)
                 } else {

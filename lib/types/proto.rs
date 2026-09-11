@@ -2,14 +2,42 @@
 
 use thiserror::Error;
 
-/// Convenience alias to avoid writing out a lengthy trait bound
-pub trait Transport = where
-    Self: tonic::client::GrpcService<tonic::body::Body>,
-    Self::Error: Into<tonic::codegen::StdError>,
-    Self::ResponseBody:
+/// Convenience trait for a lengthy trait bound. A blanket impl covers every
+/// type that satisfies the bounds.
+///
+/// The associated types restate the `GrpcService` bounds, so that
+/// `T: Transport` alone gives all of them.
+pub trait Transport:
+    tonic::client::GrpcService<
+        tonic::body::Body,
+        Error = <Self as Transport>::TransportError,
+        ResponseBody = <Self as Transport>::TransportResponseBody,
+    >
+{
+    type TransportError: Into<tonic::codegen::StdError>;
+
+    type TransportResponseBody: tonic::codegen::Body<
+            Data = tonic::codegen::Bytes,
+            Error = <Self as Transport>::TransportBodyError,
+        > + Send
+        + 'static;
+
+    type TransportBodyError: Into<tonic::codegen::StdError> + Send;
+}
+
+impl<T> Transport for T
+where
+    T: tonic::client::GrpcService<tonic::body::Body>,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::ResponseBody:
         tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    <Self::ResponseBody as tonic::codegen::Body>::Error:
-        Into<tonic::codegen::StdError> + Send;
+    <T::ResponseBody as tonic::codegen::Body>::Error:
+        Into<tonic::codegen::StdError> + Send,
+{
+    type TransportError = T::Error;
+    type TransportResponseBody = T::ResponseBody;
+    type TransportBodyError = <T::ResponseBody as tonic::codegen::Body>::Error;
+}
 
 #[derive(Debug, Error)]
 pub enum Error {

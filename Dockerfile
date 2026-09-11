@@ -1,6 +1,11 @@
-# Stable Rust version, as of January 2025. 
-FROM rust:1.84-slim-bookworm AS builder
+# rust-toolchain.toml sets the Rust version. This tag only supplies rustup.
+FROM rust:1-slim-bookworm AS builder
 WORKDIR /workspace
+
+# Install the pinned toolchain in its own layer, before the source copy.
+COPY rust-toolchain.toml .
+RUN rustup toolchain install
+
 COPY . .
 
 RUN cargo build --locked --release
