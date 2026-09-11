@@ -11,14 +11,14 @@ use plain_bitassets::{
     net::{Peer, PeerConnectionStatus},
     state::{AmmPoolState, BitAssetSeqId, DutchAuctionState},
     types::{
-        Address, AssetId, Authorization, BitAssetData, BitAssetDataUpdates,
-        BitAssetId, BitcoinOutputContent, Block, BlockHash, BlockIndex,
-        BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body, DutchAuctionId,
-        DutchAuctionParams, EncryptionPubKey, FilledOutput,
-        FilledOutputContent, Header, M6id, MainchainSyncPhase,
-        MainchainSyncProgress, MempoolTx, MerkleRoot, OutPoint, Output,
-        OutputContent, PointedOutput, Transaction, TxData, TxIn, Txid,
-        VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
+        Address, AssetId, Authorization, Authorized, BitAssetData,
+        BitAssetDataUpdates, BitAssetId, BitcoinOutputContent, Block,
+        BlockHash, BlockIndex, BlockIndexDeposit, BlockIndexSpend,
+        BlockIndexTx, Body, DutchAuctionId, DutchAuctionParams,
+        EncryptionPubKey, FilledOutput, FilledOutputContent, Header, M6id,
+        MainchainSyncPhase, MainchainSyncProgress, MempoolTx, MerkleRoot,
+        OutPoint, Output, OutputContent, PointedOutput, Transaction, TxData,
+        TxIn, Txid, VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
         schema as bitassets_schema,
     },
     wallet::{Balance, TransferDests},
@@ -460,9 +460,24 @@ pub trait Rpc {
         msg: String,
     ) -> RpcResult<Authorization>;
 
+    /// Sign a transaction, and optionally broadcast it.
+    #[method(name = "sign_transaction")]
+    async fn sign_transaction(
+        &self,
+        transaction: Transaction,
+        broadcast: Option<bool>,
+    ) -> RpcResult<Authorized<Transaction>>;
+
     /// Stop the node
     #[method(name = "stop")]
     async fn stop(&self);
+
+    /// Verify and broadcast a transaction
+    #[method(name = "submit_transaction")]
+    async fn submit_transaction(
+        &self,
+        transaction: Authorized<Transaction>,
+    ) -> RpcResult<Txid>;
 
     /// Transfer funds to the specified address
     #[method(name = "transfer")]

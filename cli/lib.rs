@@ -1,4 +1,5 @@
 use std::{
+    marker::PhantomData,
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
 };
@@ -9,9 +10,9 @@ use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder};
 use plain_bitassets::{
     authorization::{Dst, Signature},
     types::{
-        Address, AssetId, BitAssetData, BitAssetId, BlockHash, DutchAuctionId,
-        DutchAuctionParams, EncryptionPubKey, THIS_SIDECHAIN, Txid,
-        VerifyingKey,
+        Address, AssetId, AuthorizedTransaction, BitAssetData, BitAssetId,
+        BlockHash, DutchAuctionId, DutchAuctionParams, EncryptionPubKey,
+        THIS_SIDECHAIN, Transaction, Txid, VerifyingKey,
     },
     wallet::TransferDests,
 };
@@ -21,6 +22,20 @@ use url::{Host, Url};
 
 fn parse_transfer_dests(s: &str) -> Result<TransferDests, serde_json::Error> {
     serde_json::from_str(s)
+}
+
+struct JsonParser<T>(PhantomData<T>);
+
+impl<T> JsonParser<T> {
+    fn parse(
+        s: &str,
+    ) -> Result<T, serde_path_to_error::Error<serde_json::Error>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let mut deserializer = serde_json::Deserializer::from_str(s);
+        serde_path_to_error::deserialize(&mut deserializer)
+    }
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -246,8 +261,20 @@ pub enum Command {
         #[arg(long)]
         msg: String,
     },
+    /// Sign a transaction, and optionally broadcast it.
+    SignTransaction {
+        #[arg(value_parser = JsonParser::<Transaction>::parse)]
+        transaction: Transaction,
+        #[arg(default_value_t = false)]
+        broadcast: bool,
+    },
     /// Stop the node
     Stop,
+    /// Verify and broadcast a transaction
+    SubmitTransaction {
+        #[arg(value_parser = JsonParser::<AuthorizedTransaction>::parse)]
+        transaction: AuthorizedTransaction,
+    },
     /// Transfer funds to the specified address
     Transfer {
         dest: Address,
@@ -619,9 +646,22 @@ where
                 rpc_client.sign_arbitrary_msg_as_addr(address, msg).await?;
             serde_json::to_string_pretty(&authorization)?
         }
+        Command::SignTransaction {
+            transaction,
+            broadcast,
+        } => {
+            let authorized = rpc_client
+                .sign_transaction(transaction, Some(broadcast))
+                .await?;
+            serde_json::to_string_pretty(&authorized)?
+        }
         Command::Stop => {
             let () = rpc_client.stop().await?;
             String::default()
+        }
+        Command::SubmitTransaction { transaction } => {
+            let txid = rpc_client.submit_transaction(transaction).await?;
+            format!("{txid}")
         }
         Command::Transfer {
             dest,

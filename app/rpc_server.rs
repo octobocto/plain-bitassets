@@ -13,10 +13,11 @@ use plain_bitassets::{
     net::Peer,
     state::{self, AmmPair, AmmPoolState, BitAssetSeqId, DutchAuctionState},
     types::{
-        Address, AssetId, Authorization, BitAssetData, BitAssetId, Block,
-        BlockHash, DutchAuctionId, DutchAuctionParams, EncryptionPubKey,
-        FilledOutputContent, MainchainSyncProgress, PointedOutput, Transaction,
-        Txid, VerifyingKey, WithdrawalBundle, keys::Ecies,
+        Address, AssetId, Authorization, AuthorizedTransaction, BitAssetData,
+        BitAssetId, Block, BlockHash, DutchAuctionId, DutchAuctionParams,
+        EncryptionPubKey, FilledOutputContent, MainchainSyncProgress,
+        PointedOutput, Transaction, Txid, VerifyingKey, WithdrawalBundle,
+        keys::Ecies,
     },
     wallet::{Balance, TransferDests},
 };
@@ -149,7 +150,7 @@ impl RpcServer for RpcServerImpl {
             self.app.wallet.authorize(tx).map_err(custom_err)?;
         self.app
             .node
-            .submit_transaction(authorized_tx)
+            .submit_transaction(&authorized_tx)
             .map_err(custom_err)?;
         Ok(amount_receive)
     }
@@ -263,7 +264,7 @@ impl RpcServer for RpcServerImpl {
             self.app.wallet.authorize(tx).map_err(custom_err)?;
         self.app
             .node
-            .submit_transaction(authorized_tx)
+            .submit_transaction(&authorized_tx)
             .map_err(custom_err)?;
         Ok(receive_quantity)
     }
@@ -299,7 +300,7 @@ impl RpcServer for RpcServerImpl {
             self.app.wallet.authorize(tx).map_err(custom_err)?;
         self.app
             .node
-            .submit_transaction(authorized_tx)
+            .submit_transaction(&authorized_tx)
             .map_err(custom_err)?;
         Ok((
             auction_state.base_amount_remaining.latest().data,
@@ -760,8 +761,35 @@ impl RpcServer for RpcServerImpl {
             .map_err(custom_err)
     }
 
+    async fn sign_transaction(
+        &self,
+        transaction: Transaction,
+        broadcast: Option<bool>,
+    ) -> RpcResult<AuthorizedTransaction> {
+        let authorized =
+            self.app.wallet.authorize(transaction).map_err(custom_err)?;
+        if let Some(true) = broadcast {
+            let () = self
+                .app
+                .submit_transaction(&authorized)
+                .map_err(custom_err)?;
+        }
+        Ok(authorized)
+    }
+
     async fn stop(&self) {
         std::process::exit(0);
+    }
+
+    async fn submit_transaction(
+        &self,
+        transaction: AuthorizedTransaction,
+    ) -> RpcResult<Txid> {
+        let () = self
+            .app
+            .submit_transaction(&transaction)
+            .map_err(custom_err)?;
+        Ok(transaction.transaction.txid())
     }
 
     async fn transfer(
