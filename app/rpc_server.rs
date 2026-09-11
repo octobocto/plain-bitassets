@@ -22,7 +22,8 @@ use plain_bitassets::{
     wallet::{Balance, TransferDests},
 };
 use plain_bitassets_app_rpc_api::{
-    GetBlockTemplateResponse, PointedSpentOutput, RpcServer, TxInfo,
+    self as rpc_api, GetBlockTemplateResponse, PointedSpentOutput, TxInfo,
+    node::RpcServer as _,
 };
 use tower_http::{
     cors::CorsLayer,
@@ -46,12 +47,388 @@ where
     custom_err_msg(format!("{error:#}"))
 }
 
-pub struct RpcServerImpl {
+#[derive(Clone)]
+#[repr(transparent)]
+pub struct RpcServerImpl<const ENABLE_PRIVATE_API: bool> {
     app: App,
 }
 
+pub struct PrivateOnlyRpcServerImpl;
+
 #[async_trait]
-impl RpcServer for RpcServerImpl {
+impl rpc_api::open_api::RpcServer for PrivateOnlyRpcServerImpl {
+    async fn openapi_schema(&self) -> RpcResult<utoipa::openapi::OpenApi> {
+        rpc_api::private_openapi().map_err(custom_err)
+    }
+}
+
+#[async_trait]
+impl rpc_api::open_api::RpcServer for RpcServerImpl<false> {
+    async fn openapi_schema(&self) -> RpcResult<utoipa::openapi::OpenApi> {
+        rpc_api::public_openapi().map_err(custom_err)
+    }
+}
+
+#[async_trait]
+impl rpc_api::open_api::RpcServer for RpcServerImpl<true> {
+    async fn openapi_schema(&self) -> RpcResult<utoipa::openapi::OpenApi> {
+        rpc_api::openapi().map_err(custom_err)
+    }
+}
+
+#[async_trait]
+impl rpc_api::node::PrivateRpcServer for RpcServerImpl<true> {
+    async fn connect_peer(&self, addr: SocketAddr) -> RpcResult<()> {
+        self.app.node.connect_peer(addr).map_err(custom_err)
+    }
+
+    async fn forget_peer(&self, addr: SocketAddr) -> RpcResult<()> {
+        match self.app.node.forget_peer(&addr) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(custom_err(err)),
+        }
+    }
+
+    async fn invalidate_block(&self, block_hash: BlockHash) -> RpcResult<()> {
+        self.app
+            .node
+            .invalidate_block(block_hash)
+            .map_err(custom_err)
+    }
+
+    async fn remove_from_mempool(&self, txid: Txid) -> RpcResult<()> {
+        self.app.node.remove_from_mempool(txid).map_err(custom_err)
+    }
+
+    async fn stop(&self) {
+        std::process::exit(0);
+    }
+}
+
+#[async_trait]
+impl<const ENABLE_PRIVATE_API: bool> rpc_api::node::RpcServer
+    for RpcServerImpl<ENABLE_PRIVATE_API>
+{
+    async fn bitasset_data(
+        &self,
+        bitasset_id: BitAssetId,
+    ) -> RpcResult<BitAssetData> {
+        self.app
+            .node
+            .get_current_bitasset_data(&bitasset_id)
+            .map_err(custom_err)
+    }
+
+    async fn bitassets(
+        &self,
+    ) -> RpcResult<Vec<(BitAssetSeqId, BitAssetId, BitAssetData)>> {
+        self.app.node.bitassets().map_err(custom_err)
+    }
+
+    async fn connect_block(
+        &self,
+        block: Block,
+        main_block_hash: bitcoin::BlockHash,
+    ) -> RpcResult<bool> {
+        self.app
+            .local_pool
+            .spawn_pinned({
+                let app = self.app.clone();
+                move || async move {
+                    app.connect_block(block, main_block_hash)
+                        .await
+                        .map_err(custom_err)
+                }
+            })
+            .await
+            .unwrap()
+    }
+
+    async fn dutch_auctions(
+        &self,
+    ) -> RpcResult<Vec<(DutchAuctionId, DutchAuctionState)>> {
+        self.app.node.dutch_auctions().map_err(custom_err)
+    }
+
+    async fn get_amm_pool_state(
+        &self,
+        asset0: AssetId,
+        asset1: AssetId,
+    ) -> RpcResult<AmmPoolState> {
+        let amm_pair = AmmPair::new(asset0, asset1);
+        self.app
+            .node
+            .get_amm_pool_state(amm_pair)
+            .map_err(custom_err)
+    }
+
+    async fn get_amm_price(
+        &self,
+        base: AssetId,
+        quote: AssetId,
+    ) -> RpcResult<Option<Fraction>> {
+        self.app
+            .node
+            .try_get_amm_price(base, quote)
+            .map_err(custom_err)
+    }
+
+    async fn get_block(&self, block_hash: BlockHash) -> RpcResult<Block> {
+        let block = self
+            .app
+            .node
+            .get_block(block_hash)
+            .expect("This error should have been handled properly.");
+        Ok(block)
+    }
+
+    async fn get_block_hash(
+        &self,
+        height: u32,
+    ) -> RpcResult<Option<BlockHash>> {
+        self.app.node.try_get_block_hash(height).map_err(custom_err)
+    }
+
+    async fn get_block_index(
+        &self,
+        block_hash: BlockHash,
+    ) -> RpcResult<plain_bitassets::types::BlockIndex> {
+        let body = self.app.node.get_body(block_hash).map_err(custom_err)?;
+        let txs = body
+            .transactions
+            .iter()
+            .map(|tx| plain_bitassets::types::BlockIndexTx {
+                txid: tx.txid(),
+                size: tx.canonical_size(),
+                raw: const_hex::encode(tx.canonical_encoding()),
+            })
+            .collect();
+        let events = self
+            .app
+            .node
+            .get_block_index_events(block_hash)
+            .map_err(custom_err)?;
+        Ok(plain_bitassets::types::BlockIndex {
+            txs,
+            deposits: events
+                .deposits
+                .into_iter()
+                .map(|(outpoint, output)| {
+                    plain_bitassets::types::BlockIndexDeposit {
+                        outpoint,
+                        output,
+                    }
+                })
+                .collect(),
+            bundle_spends: events
+                .bundle_spends
+                .into_iter()
+                .map(|(outpoint, m6id)| {
+                    plain_bitassets::types::BlockIndexSpend { outpoint, m6id }
+                })
+                .collect(),
+        })
+    }
+
+    async fn get_best_sidechain_block_hash(
+        &self,
+    ) -> RpcResult<Option<BlockHash>> {
+        self.app.node.try_get_tip().map_err(custom_err)
+    }
+
+    async fn get_best_mainchain_block_hash(
+        &self,
+    ) -> RpcResult<Option<bitcoin::BlockHash>> {
+        let Some(sidechain_hash) =
+            self.app.node.try_get_tip().map_err(custom_err)?
+        else {
+            // No sidechain tip, so no best mainchain block hash.
+            return Ok(None);
+        };
+        let block_hash = self
+            .app
+            .node
+            .get_best_main_verification(sidechain_hash)
+            .map_err(custom_err)?;
+        Ok(Some(block_hash))
+    }
+
+    async fn get_bmm_inclusions(
+        &self,
+        block_hash: plain_bitassets::types::BlockHash,
+    ) -> RpcResult<Vec<bitcoin::BlockHash>> {
+        self.app
+            .node
+            .get_bmm_inclusions(block_hash)
+            .map_err(custom_err)
+    }
+
+    async fn get_transaction(
+        &self,
+        txid: Txid,
+    ) -> RpcResult<Option<Transaction>> {
+        self.app.node.try_get_transaction(txid).map_err(custom_err)
+    }
+
+    async fn get_stxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedSpentOutput>> {
+        let res = self
+            .app
+            .node
+            .get_stxos_by_addresses(&addresses)
+            .map_err(custom_err)?
+            .into_iter()
+            .map(|(outpoint, output)| PointedSpentOutput { outpoint, output })
+            .collect();
+        Ok(res)
+    }
+
+    async fn get_utxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>> {
+        let res = self
+            .app
+            .node
+            .get_utxos_by_addresses(&addresses)
+            .map_err(custom_err)?
+            .into_iter()
+            .map(|(outpoint, output)| PointedOutput { outpoint, output })
+            .collect();
+        Ok(res)
+    }
+
+    async fn get_transaction_info(
+        &self,
+        txid: Txid,
+    ) -> RpcResult<Option<TxInfo>> {
+        let Some((filled_tx, txin)) = self
+            .app
+            .node
+            .try_get_filled_transaction(txid)
+            .map_err(custom_err)?
+        else {
+            return Ok(None);
+        };
+        let confirmations = match txin {
+            Some(txin) => {
+                let tip_height = self
+                    .app
+                    .node
+                    .try_get_tip_height()
+                    .map_err(custom_err)?
+                    .expect("Height should exist for tip");
+                let height = self
+                    .app
+                    .node
+                    .get_height(txin.block_hash)
+                    .map_err(custom_err)?;
+                Some(tip_height - height)
+            }
+            None => None,
+        };
+        let fee_sats = filled_tx
+            .transaction
+            .bitcoin_fee()
+            .map_err(custom_err)?
+            .to_sat();
+        let res = TxInfo {
+            confirmations,
+            fee_sats,
+            txin,
+        };
+        Ok(Some(res))
+    }
+
+    async fn getblockcount(&self) -> RpcResult<u32> {
+        let height = self.app.node.try_get_tip_height().map_err(custom_err)?;
+        let block_count = height.map_or(0, |height| height + 1);
+        Ok(block_count)
+    }
+
+    async fn latest_failed_withdrawal_bundle_height(
+        &self,
+    ) -> RpcResult<Option<u32>> {
+        let height = self
+            .app
+            .node
+            .get_latest_failed_withdrawal_bundle_height()
+            .map_err(custom_err)?;
+        Ok(height)
+    }
+
+    async fn list_mempool(
+        &self,
+    ) -> RpcResult<Vec<plain_bitassets::types::MempoolTx>> {
+        let txs = self.app.node.get_all_transactions().map_err(custom_err)?;
+        let res = txs
+            .into_iter()
+            .map(|authorized| {
+                let tx = authorized.transaction;
+                plain_bitassets::types::MempoolTx {
+                    txid: tx.txid(),
+                    size: tx.canonical_size(),
+                    raw: const_hex::encode(tx.canonical_encoding()),
+                    tx,
+                }
+            })
+            .collect();
+        Ok(res)
+    }
+
+    async fn list_peers(&self) -> RpcResult<Vec<Peer>> {
+        let peers = self.app.node.get_active_peers();
+        Ok(peers)
+    }
+
+    async fn list_utxos(
+        &self,
+    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>> {
+        let utxos = self.app.node.get_all_utxos().map_err(custom_err)?;
+        let res = utxos
+            .into_iter()
+            .map(|(outpoint, output)| PointedOutput { outpoint, output })
+            .collect();
+        Ok(res)
+    }
+
+    async fn mainchain_sync_progress(
+        &self,
+    ) -> RpcResult<MainchainSyncProgress> {
+        Ok(self.app.node.mainchain_sync_progress())
+    }
+
+    async fn pending_withdrawal_bundle(
+        &self,
+    ) -> RpcResult<Option<WithdrawalBundle>> {
+        self.app
+            .node
+            .try_get_pending_withdrawal_bundle()
+            .map_err(custom_err)
+    }
+
+    async fn sidechain_wealth_sats(&self) -> RpcResult<u64> {
+        let sidechain_wealth =
+            self.app.node.get_sidechain_wealth().map_err(custom_err)?;
+        Ok(sidechain_wealth.to_sat())
+    }
+
+    async fn submit_transaction(
+        &self,
+        transaction: AuthorizedTransaction,
+    ) -> RpcResult<Txid> {
+        let () = self
+            .app
+            .submit_transaction(&transaction)
+            .map_err(custom_err)?;
+        Ok(transaction.transaction.txid())
+    }
+}
+
+#[async_trait]
+impl rpc_api::wallet::RpcServer for RpcServerImpl<true> {
     async fn amm_burn(
         &self,
         asset0: AssetId,
@@ -155,47 +532,8 @@ impl RpcServer for RpcServerImpl {
         Ok(amount_receive)
     }
 
-    async fn bitasset_data(
-        &self,
-        bitasset_id: BitAssetId,
-    ) -> RpcResult<BitAssetData> {
-        self.app
-            .node
-            .get_current_bitasset_data(&bitasset_id)
-            .map_err(custom_err)
-    }
-
-    async fn bitassets(
-        &self,
-    ) -> RpcResult<Vec<(BitAssetSeqId, BitAssetId, BitAssetData)>> {
-        self.app.node.bitassets().map_err(custom_err)
-    }
-
     async fn bitcoin_balance(&self) -> RpcResult<Balance> {
         self.app.wallet.get_bitcoin_balance().map_err(custom_err)
-    }
-
-    async fn connect_block(
-        &self,
-        block: Block,
-        main_block_hash: bitcoin::BlockHash,
-    ) -> RpcResult<bool> {
-        self.app
-            .local_pool
-            .spawn_pinned({
-                let app = self.app.clone();
-                move || async move {
-                    app.connect_block(block, main_block_hash)
-                        .await
-                        .map_err(custom_err)
-                }
-            })
-            .await
-            .unwrap()
-    }
-
-    async fn connect_peer(&self, addr: SocketAddr) -> RpcResult<()> {
-        self.app.node.connect_peer(addr).map_err(custom_err)
     }
 
     async fn create_deposit(
@@ -323,12 +661,6 @@ impl RpcServer for RpcServerImpl {
         Ok(txid)
     }
 
-    async fn dutch_auctions(
-        &self,
-    ) -> RpcResult<Vec<(DutchAuctionId, DutchAuctionState)>> {
-        self.app.node.dutch_auctions().map_err(custom_err)
-    }
-
     async fn encrypt_msg(
         &self,
         encryption_pubkey: EncryptionPubKey,
@@ -338,13 +670,6 @@ impl RpcServer for RpcServerImpl {
             .encrypt(msg.as_bytes())
             .map(const_hex::encode)
             .map_err(|err| custom_err(anyhow::anyhow!("{err:?}")))
-    }
-
-    async fn forget_peer(&self, addr: SocketAddr) -> RpcResult<()> {
-        match self.app.node.forget_peer(&addr) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(custom_err(err)),
-        }
     }
 
     async fn format_deposit_address(
@@ -361,86 +686,6 @@ impl RpcServer for RpcServerImpl {
             bip39::Language::English,
         );
         Ok(mnemonic.to_string())
-    }
-
-    async fn get_amm_pool_state(
-        &self,
-        asset0: AssetId,
-        asset1: AssetId,
-    ) -> RpcResult<AmmPoolState> {
-        let amm_pair = AmmPair::new(asset0, asset1);
-        self.app
-            .node
-            .get_amm_pool_state(amm_pair)
-            .map_err(custom_err)
-    }
-
-    async fn get_amm_price(
-        &self,
-        base: AssetId,
-        quote: AssetId,
-    ) -> RpcResult<Option<Fraction>> {
-        self.app
-            .node
-            .try_get_amm_price(base, quote)
-            .map_err(custom_err)
-    }
-
-    async fn get_block(&self, block_hash: BlockHash) -> RpcResult<Block> {
-        let block = self
-            .app
-            .node
-            .get_block(block_hash)
-            .expect("This error should have been handled properly.");
-        Ok(block)
-    }
-
-    async fn get_block_hash(
-        &self,
-        height: u32,
-    ) -> RpcResult<Option<BlockHash>> {
-        self.app.node.try_get_block_hash(height).map_err(custom_err)
-    }
-
-    async fn get_block_index(
-        &self,
-        block_hash: BlockHash,
-    ) -> RpcResult<plain_bitassets::types::BlockIndex> {
-        let body = self.app.node.get_body(block_hash).map_err(custom_err)?;
-        let txs = body
-            .transactions
-            .iter()
-            .map(|tx| plain_bitassets::types::BlockIndexTx {
-                txid: tx.txid(),
-                size: tx.canonical_size(),
-                raw: const_hex::encode(tx.canonical_encoding()),
-            })
-            .collect();
-        let events = self
-            .app
-            .node
-            .get_block_index_events(block_hash)
-            .map_err(custom_err)?;
-        Ok(plain_bitassets::types::BlockIndex {
-            txs,
-            deposits: events
-                .deposits
-                .into_iter()
-                .map(|(outpoint, output)| {
-                    plain_bitassets::types::BlockIndexDeposit {
-                        outpoint,
-                        output,
-                    }
-                })
-                .collect(),
-            bundle_spends: events
-                .bundle_spends
-                .into_iter()
-                .map(|(outpoint, m6id)| {
-                    plain_bitassets::types::BlockIndexSpend { outpoint, m6id }
-                })
-                .collect(),
-        })
     }
 
     async fn get_block_template(&self) -> RpcResult<GetBlockTemplateResponse> {
@@ -466,39 +711,6 @@ impl RpcServer for RpcServerImpl {
         })
     }
 
-    async fn get_best_sidechain_block_hash(
-        &self,
-    ) -> RpcResult<Option<BlockHash>> {
-        self.app.node.try_get_tip().map_err(custom_err)
-    }
-
-    async fn get_best_mainchain_block_hash(
-        &self,
-    ) -> RpcResult<Option<bitcoin::BlockHash>> {
-        let Some(sidechain_hash) =
-            self.app.node.try_get_tip().map_err(custom_err)?
-        else {
-            // No sidechain tip, so no best mainchain block hash.
-            return Ok(None);
-        };
-        let block_hash = self
-            .app
-            .node
-            .get_best_main_verification(sidechain_hash)
-            .map_err(custom_err)?;
-        Ok(Some(block_hash))
-    }
-
-    async fn get_bmm_inclusions(
-        &self,
-        block_hash: plain_bitassets::types::BlockHash,
-    ) -> RpcResult<Vec<bitcoin::BlockHash>> {
-        self.app
-            .node
-            .get_bmm_inclusions(block_hash)
-            .map_err(custom_err)
-    }
-
     async fn get_new_address(&self) -> RpcResult<Address> {
         self.app.wallet.get_new_address().map_err(custom_err)
     }
@@ -509,85 +721,6 @@ impl RpcServer for RpcServerImpl {
 
     async fn get_new_verifying_key(&self) -> RpcResult<VerifyingKey> {
         self.app.wallet.get_new_verifying_key().map_err(custom_err)
-    }
-
-    async fn get_transaction(
-        &self,
-        txid: Txid,
-    ) -> RpcResult<Option<Transaction>> {
-        self.app.node.try_get_transaction(txid).map_err(custom_err)
-    }
-
-    async fn get_stxos(
-        &self,
-        addresses: HashSet<Address>,
-    ) -> RpcResult<Vec<PointedSpentOutput>> {
-        let res = self
-            .app
-            .node
-            .get_stxos_by_addresses(&addresses)
-            .map_err(custom_err)?
-            .into_iter()
-            .map(|(outpoint, output)| PointedSpentOutput { outpoint, output })
-            .collect();
-        Ok(res)
-    }
-
-    async fn get_utxos(
-        &self,
-        addresses: HashSet<Address>,
-    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>> {
-        let res = self
-            .app
-            .node
-            .get_utxos_by_addresses(&addresses)
-            .map_err(custom_err)?
-            .into_iter()
-            .map(|(outpoint, output)| PointedOutput { outpoint, output })
-            .collect();
-        Ok(res)
-    }
-
-    async fn get_transaction_info(
-        &self,
-        txid: Txid,
-    ) -> RpcResult<Option<TxInfo>> {
-        let Some((filled_tx, txin)) = self
-            .app
-            .node
-            .try_get_filled_transaction(txid)
-            .map_err(custom_err)?
-        else {
-            return Ok(None);
-        };
-        let confirmations = match txin {
-            Some(txin) => {
-                let tip_height = self
-                    .app
-                    .node
-                    .try_get_tip_height()
-                    .map_err(custom_err)?
-                    .expect("Height should exist for tip");
-                let height = self
-                    .app
-                    .node
-                    .get_height(txin.block_hash)
-                    .map_err(custom_err)?;
-                Some(tip_height - height)
-            }
-            None => None,
-        };
-        let fee_sats = filled_tx
-            .transaction
-            .bitcoin_fee()
-            .map_err(custom_err)?
-            .to_sat();
-        let res = TxInfo {
-            confirmations,
-            fee_sats,
-            txin,
-        };
-        Ok(Some(res))
     }
 
     async fn get_wallet_addresses(&self) -> RpcResult<Vec<Address>> {
@@ -606,64 +739,6 @@ impl RpcServer for RpcServerImpl {
             .map(|(outpoint, output)| PointedOutput { outpoint, output })
             .collect();
         Ok(utxos)
-    }
-
-    async fn getblockcount(&self) -> RpcResult<u32> {
-        let height = self.app.node.try_get_tip_height().map_err(custom_err)?;
-        let block_count = height.map_or(0, |height| height + 1);
-        Ok(block_count)
-    }
-
-    async fn latest_failed_withdrawal_bundle_height(
-        &self,
-    ) -> RpcResult<Option<u32>> {
-        let height = self
-            .app
-            .node
-            .get_latest_failed_withdrawal_bundle_height()
-            .map_err(custom_err)?;
-        Ok(height)
-    }
-
-    async fn list_mempool(
-        &self,
-    ) -> RpcResult<Vec<plain_bitassets::types::MempoolTx>> {
-        let txs = self.app.node.get_all_transactions().map_err(custom_err)?;
-        let res = txs
-            .into_iter()
-            .map(|authorized| {
-                let tx = authorized.transaction;
-                plain_bitassets::types::MempoolTx {
-                    txid: tx.txid(),
-                    size: tx.canonical_size(),
-                    raw: const_hex::encode(tx.canonical_encoding()),
-                    tx,
-                }
-            })
-            .collect();
-        Ok(res)
-    }
-
-    async fn list_peers(&self) -> RpcResult<Vec<Peer>> {
-        let peers = self.app.node.get_active_peers();
-        Ok(peers)
-    }
-
-    async fn list_utxos(
-        &self,
-    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>> {
-        let utxos = self.app.node.get_all_utxos().map_err(custom_err)?;
-        let res = utxos
-            .into_iter()
-            .map(|(outpoint, output)| PointedOutput { outpoint, output })
-            .collect();
-        Ok(res)
-    }
-
-    async fn mainchain_sync_progress(
-        &self,
-    ) -> RpcResult<MainchainSyncProgress> {
-        Ok(self.app.node.mainchain_sync_progress())
     }
 
     async fn mine(&self, fee: Option<u64>) -> RpcResult<()> {
@@ -705,20 +780,6 @@ impl RpcServer for RpcServerImpl {
         Ok(utxos)
     }
 
-    async fn openapi_schema(&self) -> RpcResult<utoipa::openapi::OpenApi> {
-        let res = plain_bitassets_app_rpc_api::openapi().map_err(custom_err)?;
-        Ok(res)
-    }
-
-    async fn pending_withdrawal_bundle(
-        &self,
-    ) -> RpcResult<Option<WithdrawalBundle>> {
-        self.app
-            .node
-            .try_get_pending_withdrawal_bundle()
-            .map_err(custom_err)
-    }
-
     async fn register_bitasset(
         &self,
         plain_name: String,
@@ -741,17 +802,6 @@ impl RpcServer for RpcServerImpl {
         Ok(txid)
     }
 
-    async fn invalidate_block(&self, block_hash: BlockHash) -> RpcResult<()> {
-        self.app
-            .node
-            .invalidate_block(block_hash)
-            .map_err(custom_err)
-    }
-
-    async fn remove_from_mempool(&self, txid: Txid) -> RpcResult<()> {
-        self.app.node.remove_from_mempool(txid).map_err(custom_err)
-    }
-
     async fn reserve_bitasset(&self, plain_name: String) -> RpcResult<Txid> {
         let mut tx = Transaction::default();
         let () = match self.app.wallet.reserve_bitasset(&mut tx, &plain_name) {
@@ -768,12 +818,6 @@ impl RpcServer for RpcServerImpl {
             .wallet
             .set_seed_from_mnemonic(mnemonic.as_str())
             .map_err(custom_err)
-    }
-
-    async fn sidechain_wealth_sats(&self) -> RpcResult<u64> {
-        let sidechain_wealth =
-            self.app.node.get_sidechain_wealth().map_err(custom_err)?;
-        Ok(sidechain_wealth.to_sat())
     }
 
     async fn sign_arbitrary_msg(
@@ -812,21 +856,6 @@ impl RpcServer for RpcServerImpl {
                 .map_err(custom_err)?;
         }
         Ok(authorized)
-    }
-
-    async fn stop(&self) {
-        std::process::exit(0);
-    }
-
-    async fn submit_transaction(
-        &self,
-        transaction: AuthorizedTransaction,
-    ) -> RpcResult<Txid> {
-        let () = self
-            .app
-            .submit_transaction(&transaction)
-            .map_err(custom_err)?;
-        Ok(transaction.transaction.txid())
     }
 
     async fn transfer(
@@ -973,67 +1002,133 @@ impl MakeRequestId for RequestIdMaker {
     }
 }
 
+pub struct ServerAddresses {
+    pub _rpc_addr: SocketAddr,
+    pub _private_rpc_addr: SocketAddr,
+}
+
 pub async fn run_server(
     app: App,
+    private_rpc_url: url::Url,
     rpc_url: url::Url,
-) -> anyhow::Result<SocketAddr> {
+) -> anyhow::Result<ServerAddresses> {
     const REQUEST_ID_HEADER: &str = "x-request-id";
 
     // Ordering here matters! Order here is from official docs on request IDs tracings
     // https://docs.rs/tower-http/latest/tower_http/request_id/index.html#using-trace
-    let tracer = tower::ServiceBuilder::new()
-        .layer(SetRequestIdLayer::new(
-            http::HeaderName::from_static(REQUEST_ID_HEADER),
-            RequestIdMaker,
-        ))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(move |request: &http::Request<_>| {
-                    let request_id = request
-                        .headers()
-                        .get(http::HeaderName::from_static(REQUEST_ID_HEADER))
-                        .and_then(|h| h.to_str().ok())
-                        .filter(|s| !s.is_empty());
+    let tracer = || {
+        tower::ServiceBuilder::new()
+            .layer(SetRequestIdLayer::new(
+                http::HeaderName::from_static(REQUEST_ID_HEADER),
+                RequestIdMaker,
+            ))
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(move |request: &http::Request<_>| {
+                        let request_id = request
+                            .headers()
+                            .get(http::HeaderName::from_static(
+                                REQUEST_ID_HEADER,
+                            ))
+                            .and_then(|h| h.to_str().ok())
+                            .filter(|s| !s.is_empty());
 
-                    tracing::span!(
-                        tracing::Level::DEBUG,
-                        "request",
-                        method = %request.method(),
-                        uri = %request.uri(),
-                        request_id , // this is needed for the record call below to work
+                        tracing::span!(
+                            tracing::Level::DEBUG,
+                            "request",
+                            method = %request.method(),
+                            uri = %request.uri(),
+                            request_id , // this is needed for the record call below to work
+                        )
+                    })
+                    .on_request(())
+                    .on_eos(())
+                    .on_response(
+                        DefaultOnResponse::new().level(tracing::Level::INFO),
                     )
-                })
-                .on_request(())
-                .on_eos(())
-                .on_response(
-                    DefaultOnResponse::new().level(tracing::Level::INFO),
-                )
-                .on_failure(
-                    DefaultOnFailure::new().level(tracing::Level::ERROR),
-                ),
-        )
-        .layer(PropagateRequestIdLayer::new(http::HeaderName::from_static(
-            REQUEST_ID_HEADER,
-        )))
-        .into_inner();
+                    .on_failure(
+                        DefaultOnFailure::new().level(tracing::Level::ERROR),
+                    ),
+            )
+            .layer(PropagateRequestIdLayer::new(http::HeaderName::from_static(
+                REQUEST_ID_HEADER,
+            )))
+            .into_inner()
+    };
 
-    let http_middleware = tower::ServiceBuilder::new()
-        .layer(tracer)
-        .layer(CorsLayer::permissive());
-    let rpc_middleware = RpcServiceBuilder::new().rpc_logger(1024);
+    let http_middleware = || {
+        tower::ServiceBuilder::new()
+            .layer(tracer())
+            .layer(CorsLayer::permissive())
+    };
+    let rpc_middleware = || RpcServiceBuilder::new().rpc_logger(1024);
 
     let server = Server::builder()
-        .set_http_middleware(http_middleware)
-        .set_rpc_middleware(rpc_middleware)
+        .set_http_middleware(http_middleware())
+        .set_rpc_middleware(rpc_middleware())
         .build(rpc_url.socket_addrs(|| None)?.as_slice())
         .await?;
+    let rpc_server_addr = server.local_addr()?;
 
-    let addr = server.local_addr()?;
-    let handle = server.start(RpcServerImpl { app }.into_rpc());
+    let (_task_handle, server_addrs) = if private_rpc_url != rpc_url {
+        let private_rpc_server = Server::builder()
+            .set_http_middleware(http_middleware())
+            .set_rpc_middleware(rpc_middleware())
+            .build(private_rpc_url.socket_addrs(|| None)?.as_slice())
+            .await?;
+        let private_rpc_server_addr = private_rpc_server.local_addr()?;
 
-    // In this example we don't care about doing shutdown so let's it run forever.
-    // You may use the `ServerHandle` to shut it down or manage it yourself.
-    tokio::spawn(handle.stopped());
+        let rpc_server_handle = {
+            let rpc_server_impl = RpcServerImpl::<false> { app: app.clone() };
+            let mut rpc_module =
+                rpc_api::open_api::RpcServer::into_rpc(rpc_server_impl.clone());
+            rpc_module
+                .merge(rpc_api::node::RpcServer::into_rpc(rpc_server_impl))?;
+            server.start(rpc_module)
+        };
+        let private_only_rpc_server_handle = {
+            let rpc_server_impl = RpcServerImpl::<true> { app };
+            let mut rpc_module = rpc_api::open_api::RpcServer::into_rpc(
+                PrivateOnlyRpcServerImpl,
+            );
+            rpc_module.merge(rpc_api::node::PrivateRpcServer::into_rpc(
+                rpc_server_impl.clone(),
+            ))?;
+            rpc_module
+                .merge(rpc_api::wallet::RpcServer::into_rpc(rpc_server_impl))?;
+            private_rpc_server.start(rpc_module)
+        };
+        let server_addrs = ServerAddresses {
+            _rpc_addr: rpc_server_addr,
+            _private_rpc_addr: private_rpc_server_addr,
+        };
+        let task_handle = tokio::spawn(async {
+            tokio::select! {
+                () = rpc_server_handle.stopped() => (),
+                () = private_only_rpc_server_handle.stopped() => (),
+            }
+        });
+        (task_handle, server_addrs)
+    } else {
+        let rpc_server_impl = RpcServerImpl::<true> { app };
+        let mut rpc_module =
+            rpc_api::open_api::RpcServer::into_rpc(rpc_server_impl.clone());
+        rpc_module.merge(rpc_api::node::PrivateRpcServer::into_rpc(
+            rpc_server_impl.clone(),
+        ))?;
+        rpc_module.merge(rpc_api::node::RpcServer::into_rpc(
+            rpc_server_impl.clone(),
+        ))?;
+        rpc_module
+            .merge(rpc_api::wallet::RpcServer::into_rpc(rpc_server_impl))?;
 
-    Ok(addr)
+        let server_addrs = ServerAddresses {
+            _rpc_addr: rpc_server_addr,
+            _private_rpc_addr: rpc_server_addr,
+        };
+        let handle = server.start(rpc_module);
+        let task_handle = tokio::spawn(handle.stopped());
+        (task_handle, server_addrs)
+    };
+    Ok(server_addrs)
 }

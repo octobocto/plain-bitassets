@@ -20,7 +20,10 @@ use plain_bitassets::{
     authorization::{Dst, Signature},
     types::{Address, BitAssetData, BitAssetId, GetAddress as _, Txid},
 };
-use plain_bitassets_app_rpc_api::RpcClient as _;
+use plain_bitassets_app_rpc_api::{
+    node::{PrivateRpcClient as _, RpcClient as _},
+    wallet::RpcClient as _,
+};
 use tokio::time::sleep;
 use tracing::Instrument as _;
 

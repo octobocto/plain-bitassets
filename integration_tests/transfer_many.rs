@@ -21,7 +21,9 @@ use futures::{
     FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture,
 };
 use plain_bitassets::{types::GetBitcoinValue as _, wallet::TransferDests};
-use plain_bitassets_app_rpc_api::RpcClient as _;
+use plain_bitassets_app_rpc_api::{
+    node::RpcClient as _, wallet::RpcClient as _,
+};
 use tokio::time::sleep;
 use tracing::Instrument as _;
 

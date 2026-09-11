@@ -18,7 +18,7 @@ use bitcoin::Amount;
 use futures::{
     FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture,
 };
-use plain_bitassets_app_rpc_api::RpcClient as _;
+use plain_bitassets_app_rpc_api::wallet::RpcClient as _;
 use tokio::time::sleep;
 use tracing::Instrument as _;
 

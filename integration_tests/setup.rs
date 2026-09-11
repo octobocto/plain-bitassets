@@ -11,7 +11,9 @@ use bip300301_enforcer_integration_tests::{
 use bip300301_enforcer_lib::types::SidechainNumber;
 use futures::{TryFutureExt as _, channel::mpsc, future};
 use plain_bitassets::types::{FilledOutputContent, Network, PointedOutput};
-use plain_bitassets_app_rpc_api::RpcClient as _;
+use plain_bitassets_app_rpc_api::{
+    node::RpcClient as _, wallet::RpcClient as _,
+};
 use reserve_port::ReservedPort;
 use thiserror::Error;
 use tokio::time::sleep;

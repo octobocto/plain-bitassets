@@ -16,7 +16,10 @@ use plain_bitassets::{
     },
     wallet::TransferDests,
 };
-use plain_bitassets_app_rpc_api::RpcClient;
+use plain_bitassets_app_rpc_api::{
+    node::{PrivateRpcClient as _, RpcClient as _},
+    wallet::RpcClient as _,
+};
 use tracing_subscriber::layer::SubscriberExt as _;
 use url::{Host, Url};
 

@@ -156,6 +156,12 @@ pub(super) struct Cli {
     /// Manually provide the network magic bytes
     #[arg(long, value_parser = parse_network_magic)]
     network_magic: Option<[u8; 4]>,
+    /// Host for the private RPC server. Defaults to the RPC host.
+    #[arg(long, value_parser = Host::parse)]
+    private_rpc_host: Option<Host>,
+    /// Port for the private RPC server. Defaults to the RPC port.
+    #[arg(long)]
+    private_rpc_port: Option<u16>,
     /// Host for the RPC server
     #[arg(default_value_t = DEFAULT_RPC_HOST, long, value_parser = Host::parse)]
     rpc_host: Host,
@@ -203,6 +209,10 @@ impl Cli {
         } else {
             saturating_pred_level(self.log_level)
         };
+        let private_rpc_host = self
+            .private_rpc_host
+            .unwrap_or_else(|| self.rpc_host.clone());
+        let private_rpc_port = self.private_rpc_port.unwrap_or(self.rpc_port);
         Ok(Config {
             add_peers: HashSet::from_iter(self.add_peers),
             datadir: self.datadir.0,
@@ -215,6 +225,8 @@ impl Cli {
             net_addr: self.net_addr,
             network: self.network,
             network_magic_override: self.network_magic,
+            private_rpc_host,
+            private_rpc_port,
             rpc_host: self.rpc_host,
             rpc_port: self.rpc_port,
             server_names: HashSet::from_iter(self.server_names),
@@ -239,6 +251,8 @@ pub struct Config {
     pub network: Network,
     pub network_magic_override:
         Option<plain_bitassets::net::peer_message::MagicBytes>,
+    pub private_rpc_host: Host,
+    pub private_rpc_port: u16,
     pub rpc_host: Host,
     pub rpc_port: u16,
     pub server_names: HashSet<String>,
@@ -247,6 +261,14 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn private_rpc_url(&self) -> url::Url {
+        Url::parse(&format!(
+            "http://{}:{}",
+            self.private_rpc_host, self.private_rpc_port
+        ))
+        .unwrap()
+    }
+
     pub fn rpc_url(&self) -> url::Url {
         Url::parse(&format!("http://{}:{}", self.rpc_host, self.rpc_port))
             .unwrap()
