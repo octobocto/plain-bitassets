@@ -40,7 +40,7 @@ http = "1.2.0"
 human-size = "0.4.3"
 include_path = "0.1.1"
 itertools = "0.14.0"
-jsonrpsee = { version = "0.25.1", features = ["tracing"] }
+jsonrpsee = { version = "0.26.0", features = ["tracing"] }
 libes = "0.9.1"
 libtest-mimic = "0.8.1"
 mimalloc = "0.1.48"
@@ -102,7 +102,7 @@ rev = "7958ceffa997ffa905f046de71c8e3cf33437c2d"
 
 [workspace.dependencies.l2l-openapi]
 git = "https://github.com/Ash-L2L/l2l-openapi"
-rev = "5f8fb2237c95725731d5fb10542098303d82e215"
+rev = "caa8c1c248aca1827b57007dcfcd8ff70d607e8e"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
