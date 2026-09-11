@@ -15,8 +15,8 @@ use plain_bitassets::{
     types::{
         Address, AssetId, Authorization, BitAssetData, BitAssetId, Block,
         BlockHash, DutchAuctionId, DutchAuctionParams, EncryptionPubKey,
-        FilledOutputContent, PointedOutput, Transaction, Txid, VerifyingKey,
-        WithdrawalBundle, keys::Ecies,
+        FilledOutputContent, MainchainSyncProgress, PointedOutput, Transaction,
+        Txid, VerifyingKey, WithdrawalBundle, keys::Ecies,
     },
     wallet::Balance,
 };
@@ -627,6 +627,12 @@ impl RpcServer for RpcServerImpl {
             .map(|(outpoint, output)| PointedOutput { outpoint, output })
             .collect();
         Ok(res)
+    }
+
+    async fn mainchain_sync_progress(
+        &self,
+    ) -> RpcResult<MainchainSyncProgress> {
+        Ok(self.app.node.mainchain_sync_progress())
     }
 
     async fn mine(&self, fee: Option<u64>) -> RpcResult<()> {
