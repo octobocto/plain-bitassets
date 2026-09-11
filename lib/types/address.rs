@@ -22,7 +22,16 @@ pub enum AddressParseError {
 }
 
 #[derive(
-    BorshDeserialize, BorshSerialize, Clone, Copy, Eq, Hash, PartialEq, ToSchema,
+    BorshDeserialize,
+    BorshSerialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    ToSchema,
 )]
 #[repr(transparent)]
 #[schema(value_type = String)]

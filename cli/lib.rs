@@ -13,10 +13,15 @@ use plain_bitassets::{
         DutchAuctionParams, EncryptionPubKey, THIS_SIDECHAIN, Txid,
         VerifyingKey,
     },
+    wallet::TransferDests,
 };
 use plain_bitassets_app_rpc_api::RpcClient;
 use tracing_subscriber::layer::SubscriberExt as _;
 use url::{Host, Url};
+
+fn parse_transfer_dests(s: &str) -> Result<TransferDests, serde_json::Error> {
+    serde_json::from_str(s)
+}
 
 #[derive(Clone, Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
@@ -248,6 +253,14 @@ pub enum Command {
         dest: Address,
         #[arg(long)]
         value_sats: u64,
+        #[arg(long)]
+        fee_sats: u64,
+    },
+    /// Transfer funds to each address in a JSON map of address to value in
+    /// sats, such as `{"<address>": 1000}`
+    TransferMany {
+        #[arg(value_parser = parse_transfer_dests)]
+        dests: TransferDests,
         #[arg(long)]
         fee_sats: u64,
     },
@@ -620,6 +633,10 @@ where
                 .await?;
             format!("{txid}")
         }
+        Command::TransferMany { dests, fee_sats } => {
+            let txid = rpc_client.transfer_many(dests, fee_sats).await?;
+            format!("{txid}")
+        }
         Command::TransferBitasset {
             dest,
             asset_id,
@@ -692,5 +709,43 @@ impl Cli {
         let client = builder.build(self.rpc_url())?;
         let result = handle_command(&client, self.command).await?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn parse_transfer_many() {
+        let address = Address([1u8; 20]);
+        let cli = Cli::parse_from([
+            "plain_bitassets_app_cli",
+            "transfer-many",
+            &format!("{{\"{address}\": 1000}}"),
+            "--fee-sats",
+            "500",
+        ]);
+        let Command::TransferMany { dests, fee_sats } = cli.command else {
+            panic!("expected transfer-many");
+        };
+        assert_eq!(dests.0, BTreeMap::from([(address, 1000)]));
+        assert_eq!(fee_sats, 500);
+    }
+
+    // A repeated address must not silently drop one of the two payments.
+    #[test]
+    fn refuse_a_repeated_address() {
+        let address = Address([1u8; 20]);
+        let result = Cli::try_parse_from([
+            "plain_bitassets_app_cli",
+            "transfer-many",
+            &format!("{{\"{address}\": 1000, \"{address}\": 5000}}"),
+            "--fee-sats",
+            "500",
+        ]);
+        assert!(result.is_err());
     }
 }

@@ -21,7 +21,7 @@ use plain_bitassets::{
         VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
         schema as bitassets_schema,
     },
-    wallet::Balance,
+    wallet::{Balance, TransferDests},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -472,6 +472,15 @@ pub trait Rpc {
         value: u64,
         fee: u64,
         memo: Option<String>,
+    ) -> RpcResult<Txid>;
+
+    /// Transfer funds to each address in `dests`, which maps an address to a
+    /// value in sats
+    #[method(name = "transfer_many")]
+    async fn transfer_many(
+        &self,
+        dests: TransferDests,
+        fee_sats: u64,
     ) -> RpcResult<Txid>;
 
     /// Transfer bitassets to the specified address
