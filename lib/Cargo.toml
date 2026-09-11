@@ -32,6 +32,7 @@ hashlink = { workspace = true, features = ["serde_impl"] }
 fraction = { workspace = true }
 governor = { workspace = true, features = ["quanta", "std"] }
 heed = { workspace = true }
+hickory-resolver = { workspace = true, features = ["system-config", "tokio"] }
 const-hex = { workspace = true, features = ["serde"] }
 hex-literal = { workspace = true }
 itertools = { workspace = true }
@@ -56,11 +57,12 @@ thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 tokio-stream = { workspace = true, features = ["sync"] }
-tokio-util = { workspace = true, features = ["rt"] }
+tokio-util = { workspace = true, features = ["join-map", "rt"] }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tracing = { workspace = true }
 transitive = { workspace = true }
+url = { workspace = true }
 utoipa = { workspace = true, features = ["macros", "non_strict_integers"] }
 x25519-dalek = { workspace = true, features = ["serde", "static_secrets"] }
 zeromq = { workspace = true, optional = true }

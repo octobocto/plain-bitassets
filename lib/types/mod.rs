@@ -17,6 +17,7 @@ mod address;
 pub mod bitasset_data;
 pub mod hashes;
 pub mod keys;
+pub mod net;
 pub mod proto;
 pub mod schema;
 pub mod transaction;

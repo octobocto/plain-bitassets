@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::Deref,
     path::PathBuf,
@@ -6,7 +7,7 @@ use std::{
 };
 
 use clap::{Arg, Parser};
-use plain_bitassets::types::{Network, THIS_SIDECHAIN};
+use plain_bitassets::types::{Network, THIS_SIDECHAIN, net::SeedAddress};
 use url::{Host, Url};
 
 use crate::util::saturating_pred_level;
@@ -113,6 +114,11 @@ fn parse_network_magic(s: &str) -> Result<[u8; 4], const_hex::FromHexError> {
 #[derive(Clone, Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 pub(super) struct Cli {
+    /// Peer to dial at startup, as `host:port` or `host`. The host can be a
+    /// host name or an IP address. Use this option one time for each peer.
+    /// The node also dials the seed peers of the network.
+    #[arg(long = "add-peer")]
+    add_peers: Vec<SeedAddress>,
     /// Data directory for storing blockchain and wallet data
     #[command(flatten)]
     datadir: DatadirArg,
@@ -195,6 +201,7 @@ impl Cli {
             saturating_pred_level(self.log_level)
         };
         Ok(Config {
+            add_peers: HashSet::from_iter(self.add_peers),
             datadir: self.datadir.0,
             file_log_level: self.file_log_level,
             headless: self.headless,
@@ -215,6 +222,7 @@ impl Cli {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub add_peers: HashSet<SeedAddress>,
     pub datadir: PathBuf,
     pub file_log_level: tracing::Level,
     pub headless: bool,

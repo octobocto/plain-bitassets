@@ -285,6 +285,7 @@ impl App {
             &config.datadir,
             config.network_magic_override,
             config.network,
+            config.add_peers.clone(),
             cusf_mainchain,
             cusf_mainchain_wallet,
             &runtime,
