@@ -555,6 +555,15 @@ where
         Ok(res)
     }
 
+    pub fn get_stxos_by_addresses(
+        &self,
+        addresses: &HashSet<Address>,
+    ) -> Result<HashMap<OutPoint, SpentOutput>, Error> {
+        let rotxn = self.env.read_txn()?;
+        let stxos = self.state.get_stxos_by_addresses(&rotxn, addresses)?;
+        Ok(stxos)
+    }
+
     pub fn get_utxos_by_addresses(
         &self,
         addresses: &HashSet<Address>,

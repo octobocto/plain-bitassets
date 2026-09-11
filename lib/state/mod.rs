@@ -240,6 +240,20 @@ impl State {
         Ok(utxos)
     }
 
+    pub fn get_stxos_by_addresses(
+        &self,
+        rotxn: &RoTxn,
+        addresses: &HashSet<Address>,
+    ) -> Result<HashMap<OutPoint, SpentOutput>, Error> {
+        let stxos: HashMap<OutPoint, SpentOutput> = self
+            .stxos
+            .iter(rotxn)?
+            .filter(|(_, stxo)| Ok(addresses.contains(&stxo.output.address)))
+            .map(|(key, stxo)| Ok((key.to_outpoint(), stxo)))
+            .collect()?;
+        Ok(stxos)
+    }
+
     pub fn get_utxos_by_addresses(
         &self,
         rotxn: &RoTxn,

@@ -1,6 +1,6 @@
 //! RPC API
 
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 
 use fraction::Fraction;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
@@ -15,11 +15,11 @@ use plain_bitassets::{
         BitAssetDataUpdates, BitAssetId, BitcoinOutputContent, Block,
         BlockHash, BlockIndex, BlockIndexDeposit, BlockIndexSpend,
         BlockIndexTx, Body, DutchAuctionId, DutchAuctionParams,
-        EncryptionPubKey, FilledOutput, FilledOutputContent, Header, M6id,
-        MainchainSyncPhase, MainchainSyncProgress, MempoolTx, MerkleRoot,
-        OutPoint, Output, OutputContent, PointedOutput, Transaction, TxData,
-        TxIn, Txid, VerifyingKey, WithdrawalBundle, WithdrawalOutputContent,
-        schema as bitassets_schema,
+        EncryptionPubKey, FilledOutput, FilledOutputContent, Header, InPoint,
+        M6id, MainchainSyncPhase, MainchainSyncProgress, MempoolTx, MerkleRoot,
+        OutPoint, Output, OutputContent, PointedOutput, SpentOutput,
+        Transaction, TxData, TxIn, Txid, VerifyingKey, WithdrawalBundle,
+        WithdrawalOutputContent, schema as bitassets_schema,
     },
     wallet::{Balance, TransferDests},
 };
@@ -48,6 +48,13 @@ pub fn openapi() -> std::io::Result<utoipa::openapi::OpenApi> {
         })
 }
 
+/// A spent output, and the outpoint that created it
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct PointedSpentOutput {
+    pub outpoint: OutPoint,
+    pub output: SpentOutput,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct TxInfo {
     pub confirmations: Option<u32>,
@@ -73,9 +80,10 @@ pub struct GetBlockTemplateResponse {
     BitAssetData, BitAssetDataUpdates, BitAssetId, BitcoinOutputContent, Block,
     BlockHash, BlockIndexDeposit, BlockIndexSpend, BlockIndexTx, Body,
     DutchAuctionId, DutchAuctionParams, EncryptionPubKey, FilledOutput,
-    FilledOutputContent, Header, M6id, MainchainSyncPhase, MerkleRoot,
+    FilledOutputContent, Header, InPoint, M6id, MainchainSyncPhase, MerkleRoot,
     OutPoint, Output, OutputContent, PeerConnectionStatus, Signature,
-    Transaction, TxData, Txid, TxIn, WithdrawalOutputContent, VerifyingKey,
+    SpentOutput, Transaction, TxData, Txid, TxIn, WithdrawalOutputContent,
+    VerifyingKey,
 ])]
 #[rpc(client, server)]
 pub trait Rpc {
@@ -328,6 +336,13 @@ pub trait Rpc {
     #[method(name = "get_new_verifying_key")]
     async fn get_new_verifying_key(&self) -> RpcResult<VerifyingKey>;
 
+    /// Get stxos for addresses
+    #[method(name = "get_stxos")]
+    async fn get_stxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedSpentOutput>>;
+
     /// Get transaction by txid
     #[method(name = "get_transaction")]
     async fn get_transaction(
@@ -341,6 +356,13 @@ pub trait Rpc {
         &self,
         txid: Txid,
     ) -> RpcResult<Option<TxInfo>>;
+
+    /// Get utxos for addresses
+    #[method(name = "get_utxos")]
+    async fn get_utxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>>;
 
     /// Get wallet addresses, sorted by base58 encoding
     #[method(name = "get_wallet_addresses")]

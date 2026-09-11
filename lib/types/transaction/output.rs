@@ -1160,8 +1160,9 @@ impl GetBitcoinValue for FilledOutput {
 }
 
 /// Representation of a spent output
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 pub struct SpentOutput<OutputContent = FilledContent> {
+    #[schema(inline)]
     pub output: Output<OutputContent>,
     pub inpoint: InPoint,
 }

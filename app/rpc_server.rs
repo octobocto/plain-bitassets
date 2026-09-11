@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, net::SocketAddr};
+use std::{borrow::Cow, cmp::Ordering, collections::HashSet, net::SocketAddr};
 
 use bitcoin::Amount;
 use fraction::Fraction;
@@ -22,7 +22,7 @@ use plain_bitassets::{
     wallet::{Balance, TransferDests},
 };
 use plain_bitassets_app_rpc_api::{
-    GetBlockTemplateResponse, RpcServer, TxInfo,
+    GetBlockTemplateResponse, PointedSpentOutput, RpcServer, TxInfo,
 };
 use tower_http::{
     cors::CorsLayer,
@@ -516,6 +516,36 @@ impl RpcServer for RpcServerImpl {
         txid: Txid,
     ) -> RpcResult<Option<Transaction>> {
         self.app.node.try_get_transaction(txid).map_err(custom_err)
+    }
+
+    async fn get_stxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedSpentOutput>> {
+        let res = self
+            .app
+            .node
+            .get_stxos_by_addresses(&addresses)
+            .map_err(custom_err)?
+            .into_iter()
+            .map(|(outpoint, output)| PointedSpentOutput { outpoint, output })
+            .collect();
+        Ok(res)
+    }
+
+    async fn get_utxos(
+        &self,
+        addresses: HashSet<Address>,
+    ) -> RpcResult<Vec<PointedOutput<FilledOutputContent>>> {
+        let res = self
+            .app
+            .node
+            .get_utxos_by_addresses(&addresses)
+            .map_err(custom_err)?
+            .into_iter()
+            .map(|(outpoint, output)| PointedOutput { outpoint, output })
+            .collect();
+        Ok(res)
     }
 
     async fn get_transaction_info(

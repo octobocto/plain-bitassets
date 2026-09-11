@@ -189,6 +189,11 @@ pub enum Command {
     GetNewEncryptionKey,
     /// Get a new verifying key
     GetNewVerifyingKey,
+    /// Get stxos for addresses
+    GetStxos {
+        #[arg(required = true)]
+        addresses: Vec<Address>,
+    },
     /// Get wallet addresses, sorted by base58 encoding
     /// Get transaction by txid
     GetTransaction {
@@ -197,6 +202,11 @@ pub enum Command {
     /// Get information about a transaction in the current chain
     GetTransactionInfo {
         txid: Txid,
+    },
+    /// Get utxos for addresses
+    GetUtxos {
+        #[arg(required = true)]
+        addresses: Vec<Address>,
     },
     GetWalletAddresses,
     /// Get wallet UTXOs
@@ -549,6 +559,11 @@ where
             let vk = rpc_client.get_new_verifying_key().await?;
             format!("{vk}")
         }
+        Command::GetStxos { addresses } => {
+            let addresses = addresses.into_iter().collect();
+            let stxos = rpc_client.get_stxos(addresses).await?;
+            serde_json::to_string_pretty(&stxos)?
+        }
         Command::GetTransaction { txid } => {
             let tx = rpc_client.get_transaction(txid).await?;
             serde_json::to_string_pretty(&tx)?
@@ -556,6 +571,11 @@ where
         Command::GetTransactionInfo { txid } => {
             let tx_info = rpc_client.get_transaction_info(txid).await?;
             serde_json::to_string_pretty(&tx_info)?
+        }
+        Command::GetUtxos { addresses } => {
+            let addresses = addresses.into_iter().collect();
+            let utxos = rpc_client.get_utxos(addresses).await?;
+            serde_json::to_string_pretty(&utxos)?
         }
         Command::GetWalletAddresses => {
             let addresses = rpc_client.get_wallet_addresses().await?;
