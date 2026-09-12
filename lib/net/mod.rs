@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet, hash_map},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use fallible_iterator::FallibleIterator;
@@ -10,7 +11,9 @@ use heed::types::{SerdeBincode, Unit};
 use hickory_resolver::TokioResolver;
 use parking_lot::RwLock;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
-use sneed::{DatabaseUnique, DbError, EnvError, RwTxn, RwTxnError, UnitKey};
+use sneed::{
+    DatabaseUnique, DbError, Env, EnvError, RoTxn, RwTxn, RwTxnError, UnitKey,
+};
 use tokio_stream::StreamNotifyClose;
 use tracing::instrument;
 
@@ -443,6 +446,76 @@ impl Net {
             .map_err(|err| error::DialSeed::Connect(Box::new(err)))
     }
 
+    fn known_peer_addrs(
+        &self,
+        rotxn: &RoTxn,
+    ) -> Result<Vec<SocketAddr>, DbError> {
+        let peer_addrs = self.known_peers.iter_keys(rotxn)?.collect()?;
+        Ok(peer_addrs)
+    }
+
+    fn is_active_peer(&self, addr: &SocketAddr) -> bool {
+        self.active_peers.read().contains_key(addr)
+    }
+
+    /// Dial every peer that the database holds, seeds included.
+    /// Returns the number of connections that started.
+    fn dial_known_peers(
+        &self,
+        env: &Env<heed::WithoutTls>,
+    ) -> Result<usize, Error> {
+        let peer_addrs = {
+            let rotxn = env.read_txn().map_err(EnvError::from)?;
+            self.known_peer_addrs(&rotxn)?
+        };
+        let mut dialed = 0;
+        for peer_addr in peer_addrs {
+            if self.is_active_peer(&peer_addr) {
+                continue;
+            }
+            tracing::trace!(%peer_addr, "connecting to already known peer");
+            match self.connect_peer(env.clone(), peer_addr.into()) {
+                Ok(()) => dialed += 1,
+                Err(err) => {
+                    tracing::error!(%peer_addr, message = %ErrorChain::new(&err))
+                }
+            }
+        }
+        Ok(dialed)
+    }
+
+    /// Dial the known peers again while no peer connection exists.
+    /// `min_delay` is the shortest wait between two checks for a connection.
+    /// The wait doubles after each redial, up to `max_delay`.
+    /// The future returns only on a database error.
+    pub async fn redial_known_peers(
+        &self,
+        env: Env<heed::WithoutTls>,
+        min_delay: Duration,
+        max_delay: Duration,
+    ) -> Result<(), Error> {
+        let mut delay = min_delay;
+        let mut no_peers_at_last_check = false;
+        loop {
+            tokio::time::sleep(delay).await;
+            let active_peer_count = self.active_peers.read().len();
+            if active_peer_count != 0 {
+                delay = min_delay;
+                no_peers_at_last_check = false;
+                continue;
+            }
+            // The net task reconnects to a peer that errored. A redial waits
+            // for a full delay with no connection, so it never dials first.
+            if !no_peers_at_last_check {
+                no_peers_at_last_check = true;
+                continue;
+            }
+            let dialed = self.dial_known_peers(&env)?;
+            tracing::info!(dialed, "no peer connection: dialed known peers");
+            delay = (2 * delay).min(max_delay);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &tokio::runtime::Handle,
@@ -492,18 +565,11 @@ impl Net {
             known_peers,
             _version: version,
         };
-        #[allow(clippy::let_and_return)]
-        let known_peers: Vec<_> = {
+        let known_peers = {
             let rotxn = env.read_txn().map_err(EnvError::from)?;
-            let known_peers = net
-                .known_peers
-                .iter(&rotxn)
-                .map_err(DbError::from)?
-                .collect()
-                .map_err(DbError::from)?;
-            known_peers
+            net.known_peer_addrs(&rotxn)?
         };
-        let () = known_peers.into_iter().try_for_each(|(peer_addr, _)| {
+        let () = known_peers.into_iter().try_for_each(|peer_addr| {
             tracing::trace!(%peer_addr, "connecting to already known peer");
             match net.connect_peer(env.clone(), peer_addr.into()) {
                 Err(Error::Connect(
@@ -980,6 +1046,83 @@ mod peer_handle_test {
             super::Error::Connect(quinn::ConnectError::EndpointStopping)
         ));
         assert!(net.get_active_peers().is_empty());
+        Ok(())
+    }
+
+    const TEST_REDIAL_MIN_DELAY: Duration = Duration::from_millis(50);
+    const TEST_REDIAL_MAX_DELAY: Duration = Duration::from_millis(200);
+
+    /// A peer that drops leaves no connection, so the node dials it again.
+    #[tokio::test]
+    async fn a_lost_peer_is_dialed_again() -> anyhow::Result<()> {
+        let (_temp_dir, env, net, _info_rx) = temp_net("peer-redial")?;
+        let (remote, _) = make_server_endpoint(
+            (Ipv4Addr::LOCALHOST, 0).into(),
+            HashSet::new(),
+        )?;
+        let addr = remote.local_addr()?;
+        net.connect_peer(env.clone(), addr.into())?;
+        assert_eq!(net.get_active_peers().len(), 1);
+        net.remove_active_peer(addr);
+        assert!(net.get_active_peers().is_empty());
+        let redial = tokio::spawn({
+            let env = env.clone();
+            let net = net.clone();
+            async move {
+                net.redial_known_peers(
+                    env,
+                    TEST_REDIAL_MIN_DELAY,
+                    TEST_REDIAL_MAX_DELAY,
+                )
+                .await
+            }
+        });
+
+        let dialed_again =
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while net.get_active_peers().is_empty() {
+                    tokio::time::sleep(TEST_REDIAL_MIN_DELAY).await;
+                }
+            })
+            .await;
+
+        redial.abort();
+        dialed_again.context("the node dialed the lost peer no more")?;
+        assert_eq!(net.get_active_peers()[0].address, addr);
+        Ok(())
+    }
+
+    /// A peer that holds a connection takes no redial, and the loop starts no
+    /// second connection to it.
+    #[tokio::test]
+    async fn a_connected_peer_takes_no_redial() -> anyhow::Result<()> {
+        let (_temp_dir, env, net, _info_rx) = temp_net("peer-redial-skip")?;
+        let (remote, _) = make_server_endpoint(
+            (Ipv4Addr::LOCALHOST, 0).into(),
+            HashSet::new(),
+        )?;
+        let addr = remote.local_addr()?;
+        net.connect_peer(env.clone(), addr.into())?;
+
+        assert_eq!(net.dial_known_peers(&env)?, 0);
+
+        let redial = tokio::spawn({
+            let env = env.clone();
+            let net = net.clone();
+            async move {
+                net.redial_known_peers(
+                    env,
+                    TEST_REDIAL_MIN_DELAY,
+                    TEST_REDIAL_MAX_DELAY,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(TEST_REDIAL_MAX_DELAY * 5).await;
+        redial.abort();
+        let peers = net.get_active_peers();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].address, addr);
         Ok(())
     }
 
