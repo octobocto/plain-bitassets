@@ -147,15 +147,14 @@ impl Sender {
             .map_err(|_| error::request_queue::SendHeartbeat)
     }
 
-    /// Returns `Ok(true)` if the request was sent. Requests may be ignored if they
-    /// are duplicates of messages that have already been sent.
-    /// Returns `Ok(false)` if the request was ignored.
+    /// Queue a request. Return false for a repeated block or header request.
     pub fn send_request(
         &self,
         request: Request,
     ) -> Result<bool, error::request_queue::SendRequest> {
-        let request_hash = hash(&request);
-        if self.request_hashes.lock().insert(request_hash) {
+        if matches!(request, Request::PushTransaction(_))
+            || self.request_hashes.lock().insert(hash(&request))
+        {
             let () = self
                 .request_tx
                 .unbounded_send(request)
@@ -182,4 +181,52 @@ pub fn new() -> (Sender, ErrorRx) {
         rate_limiter: Arc::new(rate_limiter),
     };
     (sender, error_rx)
+}
+
+#[cfg(test)]
+mod test {
+    use futures::StreamExt as _;
+
+    use super::new;
+    use crate::{
+        net::peer::message::{
+            GetHeadersRequest, PushTransactionRequest, Request,
+        },
+        types::{AuthorizedTransaction, Transaction},
+    };
+
+    #[tokio::test]
+    async fn transaction_requests_can_repeat() -> anyhow::Result<()> {
+        let (sender, mut receiver) = new();
+        let request = Request::PushTransaction(PushTransactionRequest {
+            transaction: AuthorizedTransaction {
+                transaction: Transaction::new(Vec::new(), Vec::new()),
+                authorizations: Vec::new(),
+            },
+        });
+        assert!(sender.send_request(request.clone())?);
+        assert!(sender.send_request(request)?);
+        for _ in 0..2 {
+            assert!(matches!(
+                receiver.request_rx.next().await,
+                Some(Request::PushTransaction(_))
+            ));
+        }
+        assert!(sender.request_hashes.lock().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn header_requests_do_not_repeat() -> anyhow::Result<()> {
+        let (sender, _receiver) = new();
+        let request = Request::GetHeaders(GetHeadersRequest {
+            start: Default::default(),
+            end: [1; 32].into(),
+            height: Some(1),
+            peer_state_id: None,
+        });
+        assert!(sender.send_request(request.clone())?);
+        assert!(!sender.send_request(request)?);
+        Ok(())
+    }
 }

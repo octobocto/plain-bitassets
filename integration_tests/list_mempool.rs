@@ -108,9 +108,57 @@ async fn list_mempool_task(
         entry.raw == const_hex::encode(entry.tx.canonical_encoding())
     );
 
+    let signed = sidechain
+        .rpc_client
+        .get_authorized_transaction(txid)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The signed transaction is absent"))?;
+    assert_eq!(signed.transaction.txid(), txid);
+    assert!(!signed.authorizations.is_empty());
+    let duplicate = sidechain
+        .rpc_client
+        .broadcast_transaction(signed.clone())
+        .await?;
+    assert_eq!(duplicate.txid, txid);
+    assert_eq!(duplicate.peer_count, 0);
+    assert_eq!(
+        sidechain
+            .rpc_client
+            .submit_transaction(signed.clone())
+            .await?,
+        txid
+    );
+    let repeat = sidechain.rpc_client.rebroadcast_transaction(txid).await?;
+    assert_eq!(repeat.txid, txid);
+    assert_eq!(repeat.peer_count, 0);
+    let exported = sidechain
+        .rpc_client
+        .get_authorized_transaction(txid)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The signed transaction is absent"))?;
+    assert_eq!(
+        signed.transaction.canonical_encoding(),
+        exported.transaction.canonical_encoding()
+    );
+    assert_eq!(signed.authorizations, exported.authorizations);
+
     tracing::debug!("Checking that a block empties the mempool");
     let () = sidechain.bmm_single(&mut enforcer_post_setup).await?;
     anyhow::ensure!(sidechain.rpc_client.list_mempool().await?.is_empty());
+    assert!(
+        sidechain
+            .rpc_client
+            .get_authorized_transaction(txid)
+            .await?
+            .is_none()
+    );
+    assert!(
+        sidechain
+            .rpc_client
+            .rebroadcast_transaction(txid)
+            .await
+            .is_err()
+    );
 
     drop(sidechain);
     tracing::info!(

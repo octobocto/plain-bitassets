@@ -700,7 +700,12 @@ impl ConnectionTask {
                     ResponseMessage::TransactionRejected(txid),
                 )
                 .await?;
-                Err(Error::from(err))
+                if matches!(err, crate::state::Error::NoUtxo(_)) {
+                    tracing::debug!(%txid, error = %ErrorChain::new(&err), "Reject the transaction until its inputs are available");
+                    Ok(())
+                } else {
+                    Err(Error::from(err))
+                }
             }
             Ok(_) => {
                 Connection::send_response(

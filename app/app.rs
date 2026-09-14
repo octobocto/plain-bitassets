@@ -342,9 +342,17 @@ impl App {
         &self,
         tx: &plain_bitassets::types::AuthorizedTransaction,
     ) -> Result<(), Error> {
-        self.node.submit_transaction(tx)?;
-        let () = self.update()?;
+        self.broadcast_transaction(tx)?;
         Ok(())
+    }
+
+    pub fn broadcast_transaction(
+        &self,
+        tx: &plain_bitassets::types::AuthorizedTransaction,
+    ) -> Result<plain_bitassets::node::BroadcastResult, Error> {
+        let result = self.node.broadcast_transaction(tx)?;
+        let () = self.update()?;
+        Ok(result)
     }
 
     pub fn sign_and_send(&self, tx: Transaction) -> Result<(), Error> {

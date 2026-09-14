@@ -47,6 +47,15 @@ use net_task::ZmqPubHandler;
 pub type FilledTransactionWithPosition =
     (Authorized<FilledTransaction>, Option<TxIn>);
 
+#[derive(
+    Clone, Debug, serde::Deserialize, serde::Serialize, utoipa::ToSchema,
+)]
+pub struct BroadcastResult {
+    pub txid: Txid,
+    /// The number of connected peer queues that accepted the request.
+    pub peer_count: usize,
+}
+
 #[derive(Clone)]
 pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
@@ -445,14 +454,56 @@ where
         &self,
         transaction: &AuthorizedTransaction,
     ) -> Result<(), Error> {
-        {
-            let mut rotxn = self.env.write_txn()?;
-            self.state.validate_transaction(&rotxn, transaction)?;
-            self.mempool.put(&mut rotxn, transaction)?;
-            rotxn.commit().map_err(RwTxnError::from)?;
-        }
-        self.net.push_tx(Default::default(), transaction);
+        self.broadcast_transaction(transaction)?;
         Ok(())
+    }
+
+    pub fn get_authorized_transaction(
+        &self,
+        txid: Txid,
+    ) -> Result<Option<AuthorizedTransaction>, Error> {
+        let rotxn = self.env.read_txn()?;
+        self.mempool
+            .transactions
+            .try_get(&rotxn, &txid)
+            .map_err(sneed::DbError::from)
+            .map_err(Error::from)
+    }
+
+    pub fn broadcast_transaction(
+        &self,
+        transaction: &AuthorizedTransaction,
+    ) -> Result<BroadcastResult, Error> {
+        let txid = transaction.transaction.txid();
+        let stored = {
+            let mut rwtxn = self.env.write_txn()?;
+            self.state.validate_transaction(&rwtxn, transaction)?;
+            let stored = self
+                .mempool
+                .transactions
+                .try_get(&rwtxn, &txid)
+                .map_err(sneed::DbError::from)?;
+            if stored.is_none() {
+                self.mempool.put(&mut rwtxn, transaction)?;
+            }
+            rwtxn.commit().map_err(RwTxnError::from)?;
+            stored
+        };
+        let peer_count = self.net.push_tx(
+            Default::default(),
+            stored.as_ref().unwrap_or(transaction),
+        )?;
+        Ok(BroadcastResult { txid, peer_count })
+    }
+
+    pub fn rebroadcast_transaction(
+        &self,
+        txid: Txid,
+    ) -> Result<BroadcastResult, Error> {
+        let transaction = self
+            .get_authorized_transaction(txid)?
+            .ok_or(mempool::Error::MissingTransaction(txid))?;
+        self.broadcast_transaction(&transaction)
     }
 
     pub fn get_all_utxos(

@@ -119,6 +119,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("peer connection not found for {0}")]
     MissingPeerConnection(SocketAddr),
+    #[error("The peer queue at {addr} rejected the transaction")]
+    PushTransaction {
+        addr: SocketAddr,
+        #[source]
+        source: futures::channel::mpsc::SendError,
+    },
     /// Unspecified peer IP addresses cannot be connected to.
     /// `0.0.0.0` is one example of an "unspecified" IP.
     #[error("unspecified peer ip address (cannot connect to '{0}')")]
