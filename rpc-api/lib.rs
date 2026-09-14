@@ -4,6 +4,8 @@ use plain_bitassets::types::{Block, BlockHash, OutPoint, SpentOutput, TxIn};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub use plain_bitassets::node::BroadcastResult;
+
 mod schema;
 #[cfg(test)]
 mod test;
@@ -131,7 +133,9 @@ pub mod node {
         },
     };
 
-    use crate::{PointedSpentOutput, TxInfo, open_api, schema};
+    use crate::{
+        BroadcastResult, PointedSpentOutput, TxInfo, open_api, schema,
+    };
 
     #[open_api(ref_schemas[
         bitassets_schema::BitcoinAddr, bitassets_schema::BitcoinBlockHash,
@@ -385,7 +389,33 @@ pub mod node {
         #[method(name = "sidechain_wealth")]
         async fn sidechain_wealth_sats(&self) -> RpcResult<u64>;
 
-        /// Verify and broadcast a transaction
+        /// Get a signed transaction from the mempool.
+        #[open_api_method(output_schema(
+            ToSchema = "Option<Authorized<Transaction>>"
+        ))]
+        #[method(name = "get_authorized_transaction")]
+        async fn get_authorized_transaction(
+            &self,
+            txid: Txid,
+        ) -> RpcResult<Option<Authorized<Transaction>>>;
+
+        /// Validate a signed transaction and send it to connected peer queues.
+        #[open_api_method(output_schema(ToSchema))]
+        #[method(name = "broadcast_transaction")]
+        async fn broadcast_transaction(
+            &self,
+            transaction: Authorized<Transaction>,
+        ) -> RpcResult<BroadcastResult>;
+
+        /// Send a signed mempool transaction to connected peer queues.
+        #[open_api_method(output_schema(ToSchema))]
+        #[method(name = "rebroadcast_transaction")]
+        async fn rebroadcast_transaction(
+            &self,
+            txid: Txid,
+        ) -> RpcResult<BroadcastResult>;
+
+        /// Validate and broadcast a transaction.
         #[method(name = "submit_transaction")]
         async fn submit_transaction(
             &self,

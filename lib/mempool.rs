@@ -306,3 +306,62 @@ impl MemPool {
         Ok(res)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::MemPool;
+    use crate::{
+        authorization::{self, SigningKey},
+        types::{FilledOutput, OutPoint, Transaction},
+    };
+
+    #[test]
+    fn reopen_preserves_signed_transaction() -> anyhow::Result<()> {
+        let path = temp_dir::TempDir::new()?;
+        let mut options = heed::EnvOpenOptions::new().read_txn_without_tls();
+        options.map_size(16 * 1024 * 1024).max_dbs(MemPool::NUM_DBS);
+        let key = SigningKey::from_bytes(&[2; 32]);
+        let address = authorization::get_address(&key.verifying_key().into());
+        let transaction = Transaction::new(
+            vec![OutPoint::Regular {
+                txid: [3; 32].into(),
+                vout: 0,
+            }],
+            vec![
+                FilledOutput::new_bitcoin_value(
+                    address,
+                    bitcoin::Amount::from_sat(900),
+                )
+                .into(),
+            ],
+        );
+        let transaction =
+            authorization::authorize(&[(address, &key)], transaction)?;
+        let txid = transaction.transaction.txid();
+        {
+            let env = unsafe { sneed::Env::open(&options, path.path()) }?;
+            let mempool = MemPool::new(&env)?;
+            let mut rwtxn = env.write_txn()?;
+            mempool.put(&mut rwtxn, &transaction)?;
+            rwtxn.commit()?;
+        }
+        let env = unsafe { sneed::Env::open(&options, path.path()) }?;
+        let mempool = MemPool::new(&env)?;
+        let rotxn = env.read_txn()?;
+        let stored =
+            mempool
+                .transactions
+                .try_get(&rotxn, &txid)?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "The signed transaction is absent after restart"
+                    )
+                })?;
+        assert_eq!(
+            bincode::serialize(&stored)?,
+            bincode::serialize(&transaction)?
+        );
+        assert_eq!(stored.transaction.txid(), txid);
+        Ok(())
+    }
+}

@@ -37,12 +37,96 @@ use crate::{
     },
     state::{self, State},
     types::{
-        BmmResult, Body, Header, Tip,
+        AuthorizedTransaction, BmmResult, Body, Header, Tip,
         net::ResolvedSeedAddress,
         proto::mainchain::{self, Event as MainchainBlockEvent},
     },
     util::{ErrorChain, join_set},
 };
+
+const TRANSACTION_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
+fn transaction_retry_interval() -> impl futures::Stream<Item = ()> {
+    let mut interval = tokio::time::interval(TRANSACTION_RETRY_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    stream::unfold(interval, |mut interval| async move {
+        interval.tick().await;
+        Some(((), interval))
+    })
+}
+
+fn transaction_read_error(error: &state::Error) -> bool {
+    matches!(
+        error,
+        state::Error::Db(_)
+            | state::Error::BorshSerialize(_)
+            | state::Error::Authorization(
+                crate::authorization::Error::BorshSerialize(_)
+            )
+            | state::Error::Amm(state::error::Amm::Db(_))
+            | state::Error::BitAsset(state::error::BitAsset::Db(_))
+            | state::Error::DutchAuction(state::error::DutchAuction::Db(_))
+            | state::Error::ConnectWithdrawalBundleSubmitted(
+                state::error::ConnectWithdrawalBundleSubmitted::Db(_)
+            )
+    )
+}
+
+fn relay_pending_transactions(
+    env: &sneed::Env<heed::WithoutTls>,
+    mempool: &MemPool,
+    state: &State,
+    net: &Net,
+    peer: Option<SocketAddr>,
+) -> Result<(), Error> {
+    let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
+    let pending = mempool.take_all(&rwtxn)?;
+    let mut valid = Vec::new();
+    for transaction in pending {
+        match state.validate_transaction(&rwtxn, &transaction) {
+            Ok(_) => valid.push(transaction),
+            Err(error) if transaction_read_error(&error) => {
+                return Err(error.into());
+            }
+            Err(error) => {
+                let txid = transaction.transaction.txid();
+                mempool.delete(&mut rwtxn, txid)?;
+                tracing::warn!(%txid, %error, "Delete invalid pending transaction");
+            }
+        }
+    }
+    rwtxn.commit().map_err(RwTxnError::from)?;
+    let exclude: HashSet<_> = peer
+        .map(|peer| {
+            net.get_active_peers()
+                .into_iter()
+                .map(|connected| connected.address)
+                .filter(|address| *address != peer)
+                .collect()
+        })
+        .unwrap_or_default();
+    for transaction in valid {
+        relay_transaction(net, &transaction, exclude.clone())?;
+    }
+    Ok(())
+}
+
+fn relay_transaction(
+    net: &Net,
+    transaction: &AuthorizedTransaction,
+    mut exclude: HashSet<SocketAddr>,
+) -> Result<(), Error> {
+    loop {
+        match net.push_tx(exclude.clone(), transaction) {
+            Ok(_) => return Ok(()),
+            Err(error @ net::Error::PushTransaction { addr, .. }) => {
+                exclude.insert(addr);
+                tracing::warn!(%addr, %error, "Exclude the closed peer queue from this relay pass");
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
 
 #[cfg(feature = "zmq")]
 #[derive(Debug)]
@@ -988,6 +1072,7 @@ impl NetTask {
             ReconnectPeer(ResolvedSeedAddress),
             // The loop that dials known peers stopped on an error
             RedialKnownPeers(Box<net::Error>),
+            RetryTransactions,
         }
         let accept_connections = stream::try_unfold((), |()| {
             let env = self.ctxt.env.clone();
@@ -1051,6 +1136,8 @@ impl NetTask {
             .filter_map(async |res| res.err().map(Box::new))
             .map(MailboxItem::RedialKnownPeers)
         };
+        let retry_transactions = transaction_retry_interval()
+            .map(|()| MailboxItem::RetryTransactions);
         let mut mailbox_stream = stream::select_all([
             accept_connections.boxed(),
             forward_request_stream.boxed(),
@@ -1059,6 +1146,7 @@ impl NetTask {
             peer_info_stream.boxed(),
             reconnect_peer_stream.boxed(),
             redial_known_peers_stream.boxed(),
+            retry_transactions.boxed(),
         ]);
         // Attempt to switch to a descendant tip once a body has been
         // stored, if all other ancestor bodies are available.
@@ -1201,6 +1289,15 @@ impl NetTask {
                     const RECONNECT_DELAY: Duration = Duration::from_secs(10);
                     tracing::trace!(%addr, ?peer_info, "mailbox item: received PeerInfo");
                     match peer_info {
+                        PeerConnectionInfo::Connected => {
+                            relay_pending_transactions(
+                                &self.ctxt.env,
+                                &self.ctxt.mempool,
+                                &self.ctxt.state,
+                                &self.ctxt.net,
+                                Some(addr),
+                            )?;
+                        }
                         PeerConnectionInfo::Error {
                             err:
                                 PeerConnectionError::Mailbox(
@@ -1314,6 +1411,12 @@ impl NetTask {
                                 .env
                                 .write_txn()
                                 .map_err(EnvError::from)?;
+                            if self.ctxt.mempool.transactions
+                                .try_get(&rwtxn, &new_tx.transaction.txid())
+                                .map_err(DbError::from)?.is_some()
+                            {
+                                continue;
+                            }
                             match self.ctxt.mempool.put(&mut rwtxn, &new_tx) {
                                 Ok(()) => (),
                                 Err(crate::mempool::Error::UtxoDoubleSpent) => {
@@ -1327,11 +1430,11 @@ impl NetTask {
                                 Err(err) => return Err(err.into()),
                             }
                             rwtxn.commit().map_err(RwTxnError::from)?;
-                            // broadcast
-                            let () = self
-                                .ctxt
-                                .net
-                                .push_tx(HashSet::from_iter([addr]), &new_tx);
+                            relay_transaction(
+                                &self.ctxt.net,
+                                &new_tx,
+                                HashSet::from_iter([addr]),
+                            )?;
                         }
                         PeerConnectionInfo::Response(boxed) => {
                             let (resp, req) = *boxed;
@@ -1373,6 +1476,15 @@ impl NetTask {
                 }
                 MailboxItem::RedialKnownPeers(err) => {
                     return Err(Error::Net(err));
+                }
+                MailboxItem::RetryTransactions => {
+                    relay_pending_transactions(
+                        &self.ctxt.env,
+                        &self.ctxt.mempool,
+                        &self.ctxt.state,
+                        &self.ctxt.net,
+                        None,
+                    )?;
                 }
             }
         }
@@ -1529,6 +1641,449 @@ mod peer_retry_test {
         )
         .await?;
         Ok((temp_dir, node))
+    }
+
+    fn signed_transaction(
+        node: &Node,
+        path: &std::path::Path,
+    ) -> anyhow::Result<crate::types::AuthorizedTransaction> {
+        use crate::types::{FilledOutput, OutPoint, OutPointKey, Transaction};
+        use heed::types::SerdeBincode;
+        use sneed::DatabaseUnique;
+        let wallet = crate::wallet::Wallet::new(&path.join("wallet"))?;
+        wallet.set_seed(&[2; 64])?;
+        let address = wallet.get_new_address()?;
+        let outpoint = OutPoint::Regular {
+            txid: [3; 32].into(),
+            vout: 0,
+        };
+        let output = FilledOutput::new_bitcoin_value(
+            address,
+            bitcoin::Amount::from_sat(1_000),
+        );
+        let mut rwtxn = node.env.write_txn()?;
+        let utxos =
+            DatabaseUnique::<OutPointKey, SerdeBincode<FilledOutput>>::create(
+                &node.env, &mut rwtxn, "utxos",
+            )?;
+        utxos.put(&mut rwtxn, &OutPointKey::from(&outpoint), &output)?;
+        rwtxn.commit()?;
+        wallet.put_utxos(&std::collections::HashMap::from([(
+            outpoint, output,
+        )]))?;
+        let transaction = Transaction::new(
+            vec![outpoint],
+            vec![
+                FilledOutput::new_bitcoin_value(
+                    address,
+                    bitcoin::Amount::from_sat(900),
+                )
+                .into(),
+            ],
+        );
+        Ok(wallet.authorize(transaction)?)
+    }
+
+    async fn wait_for_transaction(
+        node: &Node,
+        txid: crate::types::Txid,
+    ) -> anyhow::Result<crate::types::AuthorizedTransaction> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(transaction) =
+                    node.get_authorized_transaction(txid)?
+                {
+                    return Ok(transaction);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .context("The peer did not receive the transaction")?
+    }
+
+    fn test_net_task(
+        node: &Node,
+        peer_info_rx: crate::net::PeerInfoRx,
+    ) -> super::NetTask {
+        use futures::channel::mpsc;
+        let (
+            forward_mainchain_task_request_tx,
+            forward_mainchain_task_request_rx,
+        ) = mpsc::unbounded();
+        let (_mainchain_task_event_tx, mainchain_task_event_rx) =
+            mpsc::unbounded();
+        let (new_tip_ready_tx, new_tip_ready_rx) = mpsc::unbounded();
+        super::NetTask {
+            ctxt: super::NetTaskContext {
+                env: node.env.clone(),
+                archive: node.archive.clone(),
+                mainchain_task: node.mainchain_task.clone(),
+                mempool: node.mempool.clone(),
+                net: node.net.clone(),
+                state: node.state.clone(),
+                #[cfg(feature = "zmq")]
+                zmq_pub_handler: node.zmq_pub_handler.clone(),
+            },
+            forward_mainchain_task_request_tx,
+            forward_mainchain_task_request_rx,
+            mainchain_task_event_rx,
+            new_tip_ready_tx,
+            new_tip_ready_rx,
+            peer_info_rx,
+        }
+    }
+
+    #[test]
+    fn duplicate_submission_preserves_signed_transaction() -> anyhow::Result<()>
+    {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (temp_dir, node) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&node, temp_dir.path())?;
+            let txid = transaction.transaction.txid();
+            let initial = node.broadcast_transaction(&transaction)?;
+            let duplicate = node.broadcast_transaction(&transaction)?;
+            assert_eq!(initial.txid, txid);
+            assert_eq!(initial.peer_count, 0);
+            assert_eq!(duplicate.peer_count, 0);
+            node.submit_transaction(&transaction)?;
+            let exported = node
+                .get_authorized_transaction(txid)?
+                .context("The signed transaction is absent")?;
+            assert_eq!(
+                bincode::serialize(&exported)?,
+                bincode::serialize(&transaction)?
+            );
+            assert_eq!(node.get_all_transactions()?.len(), 1);
+            assert!(node.get_authorized_transaction([9; 32].into())?.is_none());
+            assert!(node.rebroadcast_transaction([9; 32].into()).is_err());
+            let mut invalid = transaction.clone();
+            invalid.authorizations.clear();
+            assert!(node.broadcast_transaction(&invalid).is_err());
+            let exported = node
+                .get_authorized_transaction(txid)?
+                .context("The signed transaction is absent")?;
+            assert_eq!(
+                bincode::serialize(&exported)?,
+                bincode::serialize(&transaction)?
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn broadcast_rejects_input_conflicts() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (temp_dir, node) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&node, temp_dir.path())?;
+            let wallet =
+                crate::wallet::Wallet::new(&temp_dir.path().join("wallet"))?;
+            node.submit_transaction(&transaction)?;
+            let mut conflict = transaction.transaction.clone();
+            conflict.outputs[0].memo = vec![1];
+            let conflict = wallet.authorize(conflict)?;
+            let result = node.broadcast_transaction(&conflict);
+            assert!(matches!(
+                result,
+                Err(crate::node::Error::MemPool(
+                    crate::mempool::Error::UtxoDoubleSpent
+                ))
+            ));
+            let mut repeated = transaction.transaction.clone();
+            repeated.inputs.push(repeated.inputs[0]);
+            let repeated = wallet.authorize(repeated)?;
+            assert!(node.broadcast_transaction(&repeated).is_err());
+            assert_eq!(node.get_all_transactions()?.len(), 1);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn pending_transaction_reaches_a_new_peer() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (source_dir, source) = temp_node(&runtime).await?;
+            let (peer_dir, peer) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&source, source_dir.path())?;
+            signed_transaction(&peer, peer_dir.path())?;
+            let txid = transaction.transaction.txid();
+            assert_eq!(
+                source.broadcast_transaction(&transaction)?.peer_count,
+                0
+            );
+            source.connect_peer(peer.net.server.local_addr()?)?;
+            let received = wait_for_transaction(&peer, txid).await?;
+            assert_eq!(
+                bincode::serialize(&received)?,
+                bincode::serialize(&transaction)?
+            );
+            let mut rwtxn = peer.env.write_txn()?;
+            peer.mempool.delete(&mut rwtxn, txid)?;
+            rwtxn.commit()?;
+            super::relay_pending_transactions(
+                &source.env,
+                &source.mempool,
+                &source.state,
+                &source.net,
+                None,
+            )?;
+            let received = wait_for_transaction(&peer, txid).await?;
+            assert_eq!(
+                bincode::serialize(&received)?,
+                bincode::serialize(&transaction)?
+            );
+            let mut rwtxn = peer.env.write_txn()?;
+            peer.mempool.delete(&mut rwtxn, txid)?;
+            rwtxn.commit()?;
+            assert_eq!(source.rebroadcast_transaction(txid)?.peer_count, 1);
+            let received = wait_for_transaction(&peer, txid).await?;
+            assert_eq!(
+                bincode::serialize(&received)?,
+                bincode::serialize(&transaction)?
+            );
+            assert!(!source.net_task.task.is_finished());
+            assert!(!peer.net_task.task.is_finished());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn retry_deletes_invalid_transaction() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (temp_dir, node) = temp_node(&runtime).await?;
+            let mut transaction = signed_transaction(&node, temp_dir.path())?;
+            transaction.authorizations.clear();
+            assert!(node.broadcast_transaction(&transaction).is_err());
+            let mut rwtxn = node.env.write_txn()?;
+            node.mempool.put(&mut rwtxn, &transaction)?;
+            rwtxn.commit()?;
+            super::relay_pending_transactions(
+                &node.env,
+                &node.mempool,
+                &node.state,
+                &node.net,
+                None,
+            )?;
+            assert!(node.get_all_transactions()?.is_empty());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn retry_recovers_from_a_closed_peer_queue() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (source_dir, source) = temp_node(&runtime).await?;
+            let (closed_dir, closed) = temp_node(&runtime).await?;
+            let (peer_dir, peer) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&source, source_dir.path())?;
+            signed_transaction(&closed, closed_dir.path())?;
+            signed_transaction(&peer, peer_dir.path())?;
+            let txid = transaction.transaction.txid();
+            source.submit_transaction(&transaction)?;
+            let closed_addr = closed.net.server.local_addr()?;
+            source.connect_peer(closed_addr)?;
+            source.connect_peer(peer.net.server.local_addr()?)?;
+            wait_for_transaction(&closed, txid).await?;
+            wait_for_transaction(&peer, txid).await?;
+            source.net_task.task.abort();
+            while !source.net_task.task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+            source.net.try_with_active_peer_connection(closed_addr, |handle| {
+                handle.internal_message_tx.close_channel();
+            }).context("The peer connection is absent")?;
+            let result = source.rebroadcast_transaction(txid);
+            assert!(matches!(result, Err(crate::node::Error::Net(error))
+                if matches!(*error, crate::net::Error::PushTransaction { .. })));
+            let mut rwtxn = peer.env.write_txn()?;
+            peer.mempool.delete(&mut rwtxn, txid)?;
+            rwtxn.commit()?;
+            super::relay_pending_transactions(&source.env, &source.mempool, &source.state, &source.net, None)?;
+            let received = wait_for_transaction(&peer, txid).await?;
+            assert_eq!(bincode::serialize(&received)?, bincode::serialize(&transaction)?);
+            assert_eq!(source.get_all_transactions()?.len(), 1);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn retry_returns_serialization_errors() {
+        let error = crate::state::Error::BorshSerialize(std::io::Error::other(
+            "The transaction serialization failed",
+        ));
+        assert!(super::transaction_read_error(&error));
+        assert!(!super::transaction_read_error(
+            &crate::state::Error::NotEnoughFees
+        ));
+    }
+
+    #[test]
+    fn peer_forward_recovers_from_a_closed_queue() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (source_dir, mut source) = temp_node(&runtime).await?;
+            let (closed_dir, closed) = temp_node(&runtime).await?;
+            let (peer_dir, peer) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&source, source_dir.path())?;
+            signed_transaction(&closed, closed_dir.path())?;
+            signed_transaction(&peer, peer_dir.path())?;
+            source.net_task.task.abort();
+            while !source.net_task.task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+            let (net, _native_info, _dial_seeds) = crate::net::Net::new(
+                runtime.handle(),
+                &source.env,
+                source.archive.clone(),
+                None,
+                Network::Regtest,
+                source.state.clone(),
+                (Ipv4Addr::LOCALHOST, 0).into(),
+                Default::default(),
+                Default::default(),
+            )?;
+            source.net = net;
+            let closed_addr = closed.net.server.local_addr()?;
+            source.connect_peer(closed_addr)?;
+            source.connect_peer(peer.net.server.local_addr()?)?;
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if source
+                        .get_active_peers()
+                        .iter()
+                        .filter(|peer| {
+                            peer.status == PeerConnectionStatus::Connected
+                        })
+                        .count()
+                        == 2
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            source
+                .net
+                .try_with_active_peer_connection(closed_addr, |handle| {
+                    handle.internal_message_tx.close_channel();
+                })
+                .context("The peer connection is absent")?;
+            let (peer_info_tx, peer_info_rx) =
+                futures::channel::mpsc::unbounded();
+            let task = test_net_task(&source, peer_info_rx);
+            let task = tokio::spawn(task.run());
+            peer_info_tx.unbounded_send((
+                (Ipv4Addr::LOCALHOST, 1).into(),
+                Some(crate::net::PeerConnectionInfo::NewTransaction(
+                    transaction.clone(),
+                )),
+            ))?;
+            let received =
+                wait_for_transaction(&peer, transaction.transaction.txid())
+                    .await?;
+            assert_eq!(
+                bincode::serialize(&received)?,
+                bincode::serialize(&transaction)?
+            );
+            assert!(!task.is_finished());
+            drop(peer_info_tx);
+            let result =
+                tokio::time::timeout(Duration::from_secs(5), task).await??;
+            assert!(matches!(result, Err(super::Error::PeerInfoRxClosed)));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn reconnect_replay_targets_the_new_peer() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (source_dir, source) = temp_node(&runtime).await?;
+            let (first_dir, first) = temp_node(&runtime).await?;
+            let (next_dir, next) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&source, source_dir.path())?;
+            signed_transaction(&first, first_dir.path())?;
+            signed_transaction(&next, next_dir.path())?;
+            let txid = transaction.transaction.txid();
+            source.submit_transaction(&transaction)?;
+            source.connect_peer(first.net.server.local_addr()?)?;
+            wait_for_transaction(&first, txid).await?;
+            let mut rwtxn = first.env.write_txn()?;
+            first.mempool.delete(&mut rwtxn, txid)?;
+            rwtxn.commit()?;
+            next.connect_peer(source.net.server.local_addr()?)?;
+            wait_for_transaction(&next, txid).await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(first.get_authorized_transaction(txid)?.is_none());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn peer_without_inputs_stays_connected_for_retry() -> anyhow::Result<()> {
+        use crate::net::{PeerConnectionInfo, PeerResponse};
+        use futures::StreamExt as _;
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let (source_dir, mut source) = temp_node(&runtime).await?;
+            let (peer_dir, peer) = temp_node(&runtime).await?;
+            let transaction = signed_transaction(&source, source_dir.path())?;
+            let txid = transaction.transaction.txid();
+            source.submit_transaction(&transaction)?;
+            source.net_task.task.abort();
+            while !source.net_task.task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+            let (net, mut info, _dial_seeds) = crate::net::Net::new(
+                runtime.handle(), &source.env, source.archive.clone(), None,
+                Network::Regtest, source.state.clone(),
+                (Ipv4Addr::LOCALHOST, 0).into(), Default::default(), Default::default(),
+            )?;
+            source.net = net;
+            let address = peer.net.server.local_addr()?;
+            source.connect_peer(address)?;
+            let (_, connected) = tokio::time::timeout(Duration::from_secs(5), info.next())
+                .await?.context("The peer event stream closed")?;
+            assert!(matches!(connected, Some(PeerConnectionInfo::Connected)));
+            super::relay_pending_transactions(&source.env, &source.mempool, &source.state, &source.net, Some(address))?;
+            let (_, response) = tokio::time::timeout(Duration::from_secs(5), info.next())
+                .await?.context("The peer event stream closed")?;
+            let Some(PeerConnectionInfo::Response(response)) = response else {
+                anyhow::bail!("The peer returned no transaction response: {response:?}");
+            };
+            assert!(matches!(response.0, PeerResponse::TransactionRejected(rejected) if rejected == txid));
+            assert!(peer.get_authorized_transaction(txid)?.is_none());
+            signed_transaction(&peer, peer_dir.path())?;
+            assert_eq!(source.rebroadcast_transaction(txid)?.peer_count, 1);
+            let received = wait_for_transaction(&peer, txid).await?;
+            assert_eq!(
+                bincode::serialize(&received)?,
+                bincode::serialize(&transaction)?
+            );
+            assert!(!peer.net_task.task.is_finished());
+            Ok(())
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_interval_limits_repeat_requests() -> anyhow::Result<()> {
+        use futures::{FutureExt as _, StreamExt as _};
+        let interval = super::transaction_retry_interval();
+        futures::pin_mut!(interval);
+        assert_eq!(interval.next().await, Some(()));
+        tokio::time::advance(Duration::from_secs(59)).await;
+        assert!(interval.next().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(interval.next().await, Some(()));
+        tokio::time::advance(Duration::from_secs(180)).await;
+        assert_eq!(interval.next().await, Some(()));
+        assert!(interval.next().now_or_never().is_none());
+        Ok(())
     }
 
     #[test]

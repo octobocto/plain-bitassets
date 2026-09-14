@@ -22,8 +22,8 @@ use plain_bitassets::{
     wallet::{Balance, TransferDests},
 };
 use plain_bitassets_app_rpc_api::{
-    self as rpc_api, GetBlockTemplateResponse, PointedSpentOutput, TxInfo,
-    node::RpcServer as _,
+    self as rpc_api, BroadcastResult, GetBlockTemplateResponse,
+    PointedSpentOutput, TxInfo, node::RpcServer as _,
 };
 use tower_http::{
     cors::CorsLayer,
@@ -413,6 +413,35 @@ impl<const ENABLE_PRIVATE_API: bool> rpc_api::node::RpcServer
         let sidechain_wealth =
             self.app.node.get_sidechain_wealth().map_err(custom_err)?;
         Ok(sidechain_wealth.to_sat())
+    }
+
+    async fn get_authorized_transaction(
+        &self,
+        txid: Txid,
+    ) -> RpcResult<Option<AuthorizedTransaction>> {
+        self.app
+            .node
+            .get_authorized_transaction(txid)
+            .map_err(custom_err)
+    }
+
+    async fn broadcast_transaction(
+        &self,
+        transaction: AuthorizedTransaction,
+    ) -> RpcResult<BroadcastResult> {
+        self.app
+            .broadcast_transaction(&transaction)
+            .map_err(custom_err)
+    }
+
+    async fn rebroadcast_transaction(
+        &self,
+        txid: Txid,
+    ) -> RpcResult<BroadcastResult> {
+        self.app
+            .node
+            .rebroadcast_transaction(txid)
+            .map_err(custom_err)
     }
 
     async fn submit_transaction(

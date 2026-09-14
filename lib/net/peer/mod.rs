@@ -109,6 +109,7 @@ pub struct PeerResponseItem {
 #[must_use]
 #[derive(Debug)]
 pub enum Info {
+    Connected,
     Error {
         err: ConnectionError,
         resolved_addr: ResolvedSeedAddress,
@@ -444,6 +445,9 @@ pub fn handle(
         let info_tx = info_tx.clone();
         let received_msg_successfully = received_msg_successfully.clone();
         move || async move {
+            info_tx
+                .unbounded_send(Info::Connected)
+                .map_err(|_| ConnectionError::SendInfo)?;
             let connection_task = ConnectionTask {
                 connection,
                 ctxt,
@@ -500,6 +504,9 @@ pub fn connect(
                 PeerConnectionStatus::Connected.as_repr(),
                 atomic::Ordering::SeqCst,
             );
+            info_tx
+                .unbounded_send(Info::Connected)
+                .map_err(|_| ConnectionError::SendInfo)?;
 
             let connection_task = ConnectionTask {
                 connection,
