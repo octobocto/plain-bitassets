@@ -17,6 +17,7 @@ use tonic::transport::Channel;
 
 use crate::{
     archive::{self, Archive},
+    authorization::{BatchVerificationContext, rand_core::CryptoRng},
     mempool::{self, MemPool},
     net::{self, Net, Peer},
     state::{
@@ -117,6 +118,7 @@ pub type FilledTransactionWithPosition =
 #[derive(Clone)]
 pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
+    batch_verification_ctxt: BatchVerificationContext,
     cusf_mainchain: Arc<Mutex<mainchain::ValidatorClient<MainchainTransport>>>,
     cusf_mainchain_wallet:
         Option<Arc<Mutex<mainchain::WalletClient<MainchainTransport>>>>,
@@ -135,7 +137,7 @@ where
     MainchainTransport: proto::Transport,
 {
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(
+    pub async fn new<R>(
         bind_addr: SocketAddr,
         datadir: &Path,
         network: Network,
@@ -143,16 +145,18 @@ where
         cusf_mainchain_wallet: Option<
             mainchain::WalletClient<MainchainTransport>,
         >,
+        rng: &mut R,
         runtime: &tokio::runtime::Runtime,
         #[cfg(feature = "zmq")] zmq_addr: SocketAddr,
     ) -> Result<Self, Error>
     where
+        R: CryptoRng,
         mainchain::ValidatorClient<MainchainTransport>: Clone,
         MainchainTransport: Send + 'static,
         <MainchainTransport as tonic::client::GrpcService<
             tonic::body::Body,
         >>::Future: Send,
-    {
+{
         let env_path = datadir.join("data.mdb");
         // let _ = std::fs::remove_dir_all(&env_path);
         std::fs::create_dir_all(&env_path)?;
@@ -201,8 +205,15 @@ where
                 archive.clone(),
                 cusf_mainchain.clone(),
             );
-        let (net, peer_info_rx) =
-            Net::new(&env, archive.clone(), network, state.clone(), bind_addr)?;
+        let batch_verification_ctxt = BatchVerificationContext::new(rng);
+        let (net, peer_info_rx) = Net::new(
+            &env,
+            archive.clone(),
+            batch_verification_ctxt,
+            network,
+            state.clone(),
+            bind_addr,
+        )?;
         let cusf_mainchain_wallet =
             cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
         let net_task = NetTaskHandle::new(
@@ -220,6 +231,7 @@ where
         );
         Ok(Self {
             archive,
+            batch_verification_ctxt,
             cusf_mainchain: Arc::new(Mutex::new(cusf_mainchain)),
             cusf_mainchain_wallet,
             env,
@@ -479,7 +491,11 @@ where
     ) -> Result<(), Error> {
         {
             let mut rotxn = self.env.write_txn()?;
-            self.state.validate_transaction(&rotxn, &transaction)?;
+            self.state.validate_transaction(
+                &rotxn,
+                &self.batch_verification_ctxt,
+                &transaction,
+            )?;
             self.mempool.put(&mut rotxn, &transaction)?;
             rotxn.commit().map_err(RwTxnError::from)?;
         }
@@ -685,7 +701,11 @@ where
             }
             if self
                 .state
-                .validate_transaction(&rwtxn, &transaction)
+                .validate_transaction(
+                    &rwtxn,
+                    &self.batch_verification_ctxt,
+                    &transaction,
+                )
                 .is_err()
             {
                 self.mempool

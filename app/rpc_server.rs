@@ -143,8 +143,11 @@ impl RpcServer for RpcServerImpl {
                 amount_receive,
             )
             .map_err(custom_err)?;
-        let authorized_tx =
-            self.app.wallet.authorize(tx).map_err(custom_err)?;
+        let authorized_tx = self
+            .app
+            .wallet
+            .authorize(rand::rng(), tx)
+            .map_err(custom_err)?;
         self.app
             .node
             .submit_transaction(authorized_tx)
@@ -238,8 +241,11 @@ impl RpcServer for RpcServerImpl {
                 receive_quantity,
             )
             .map_err(custom_err)?;
-        let authorized_tx =
-            self.app.wallet.authorize(tx).map_err(custom_err)?;
+        let authorized_tx = self
+            .app
+            .wallet
+            .authorize(rand::rng(), tx)
+            .map_err(custom_err)?;
         self.app
             .node
             .submit_transaction(authorized_tx)
@@ -274,8 +280,11 @@ impl RpcServer for RpcServerImpl {
                 auction_state.quote_amount.latest().data,
             )
             .map_err(custom_err)?;
-        let authorized_tx =
-            self.app.wallet.authorize(tx).map_err(custom_err)?;
+        let authorized_tx = self
+            .app
+            .wallet
+            .authorize(rand::rng(), tx)
+            .map_err(custom_err)?;
         self.app
             .node
             .submit_transaction(authorized_tx)
@@ -629,7 +638,7 @@ impl RpcServer for RpcServerImpl {
     ) -> RpcResult<Signature> {
         self.app
             .wallet
-            .sign_arbitrary_msg(&verifying_key, &msg)
+            .sign_arbitrary_msg(rand::rng(), &verifying_key, &msg)
             .map_err(custom_err)
     }
 
@@ -640,7 +649,7 @@ impl RpcServer for RpcServerImpl {
     ) -> RpcResult<Authorization> {
         self.app
             .wallet
-            .sign_arbitrary_msg_as_addr(&address, &msg)
+            .sign_arbitrary_msg_as_addr(rand::rng(), &address, &msg)
             .map_err(custom_err)
     }
 
